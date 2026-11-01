@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "name": "Mudrix dev examples",
+  "integrations": [
+    {
+      "id": "dev-example",
+      "name": "Dev example",
+      "description": "For local testing only: exercises link cards, a composer action, commands, an api action and a widget against examples/dev-server.mjs. Do not publish.",
+      "version": "0.0.1",
+      "permissions": {
+        "linkCards": [
+          {
+            "hosts": ["dev-links.example"],
+            "title": "Dev example link (local testing only)",
+            "subtitle": "For local testing",
+            "buttonLabel": "Open"
+          }
+        ],
+        "composerActions": [
+          {
+            "id": "dev-link",
+            "label": "Dev link",
+            "icon": "link",
+            "insert": "https://dev-links.example/room?id={room}"
+          }
+        ],
+        "commands": [
+          {
+            "name": "push",
+            "description": "Dev only: push a note to the local mock API",
+            "usage": "/push <note>",
+            "api": "push"
+          },
+          {
+            "name": "hello",
+            "description": "Dev only: open the local hello widget",
+            "widget": true
+          }
+        ],
+        "api": {
+          "host": "localhost:8787",
+          "actions": [
+            {
+              "id": "push",
+              "label": "Push note",
+              "path": "/v1/push",
+              "body": { "room": "{room}", "text": "{text}" }
+            }
+          ]
+        },
+        "widget": {
+          "url": "http://localhost:8788/",
+          "name": "Hello widget (dev)",
+          "capabilities": ["send.message", "read.room"],
+          "parameters": ["room_id"]
+        }
+      }
+    }
+  ]
+}

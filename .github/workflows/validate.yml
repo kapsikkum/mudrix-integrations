@@ -1,6 +1,7 @@
 name: Validate
 
-# Checks repo.json against repo.schema.json and that integration ids are unique.
+# Checks repo.json against repo.schema.json, then the rules a schema cannot express:
+# unique ids and command names, and that commands point at things the integration really has.
 # Mudrix is the final validator; add the repository in Settings > Integrations to see its verdict.
 on:
   push:
@@ -16,15 +17,38 @@ jobs:
           node-version: '22'
       - name: Schema
         run: npx --yes ajv-cli@5.0.0 validate --strict=false -s repo.schema.json -d repo.json
-      - name: Unique ids
+      - name: Cross-references
         run: |
           node -e '
             const r = require("./repo.json");
-            const ids = r.integrations.map((i) => i.id);
-            const dup = ids.filter((id, n) => ids.indexOf(id) !== n);
-            if (dup.length) { console.error("duplicate ids: " + dup.join(", ")); process.exit(1); }
+            const errors = [];
+            const dups = (list) => list.filter((x, n) => list.indexOf(x) !== n);
+            const d = dups(r.integrations.map((i) => i.id));
+            if (d.length) errors.push("duplicate integration ids: " + d.join(", "));
             for (const i of r.integrations) {
-              const a = (i.permissions.composerActions || []).map((x) => x.id);
-              if (new Set(a).size !== a.length) { console.error(i.id + ": duplicate action ids"); process.exit(1); }
+              const p = i.permissions || {};
+              const at = (msg) => errors.push(i.id + ": " + msg);
+              const actionIds = (p.composerActions || []).map((x) => x.id);
+              if (dups(actionIds).length) at("duplicate composer action ids");
+              const apiIds = ((p.api && p.api.actions) || []).map((x) => x.id);
+              if (dups(apiIds).length) at("duplicate api action ids");
+              const names = (p.commands || []).map((c) => c.name);
+              if (dups(names).length) at("duplicate command names: " + dups(names).join(", "));
+              for (const c of p.commands || []) {
+                if (c.usage !== undefined && c.usage !== "/" + c.name && !c.usage.startsWith("/" + c.name + " "))
+                  at("command " + c.name + ": usage must start with /" + c.name);
+                if (c.api !== undefined) {
+                  if (!p.api) at("command " + c.name + ": api command needs permissions.api");
+                  else if (!apiIds.includes(c.api)) at("command " + c.name + ": no api action with id " + c.api);
+                }
+                if (c.widget === true && !p.widget) at("command " + c.name + ": widget command needs permissions.widget");
+              }
+              if (p.widget) {
+                const u = new URL(p.widget.url);
+                if (u.searchParams.has("theme") || u.searchParams.has("lang"))
+                  at("widget url must not set theme or lang (Mudrix adds them)");
+              }
             }
+            if (errors.length) { errors.forEach((e) => console.error(e)); process.exit(1); }
+            console.log("ok");
           '

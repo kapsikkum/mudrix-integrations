@@ -1,41 +1,124 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Mudrix integrations repository (schema 1)",
-  "description": "A structural check for editors and CI. Mudrix itself is the final validator: it also rejects invisible characters, duplicate ids and a few other things this schema cannot express.",
+  "description": "A structural check for editors and CI, written to match Mudrix's own validator. It cannot express cross-references (a command's api target must exist in api.actions, a widget command needs permissions.widget, an api command needs permissions.api, ids and command names must be unique): validate.yml checks those. Mudrix itself is the final validator. Notes: localhost hosts are accepted only by Mudrix dev builds and are not valid here; lengths count code points here but UTF-16 units in Mudrix.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "name", "integrations"],
+  "required": [
+    "schema",
+    "name",
+    "integrations"
+  ],
   "properties": {
-    "schema": { "const": 1 },
-    "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "schema": {
+      "const": 1
+    },
+    "name": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/text"
+        },
+        {
+          "maxLength": 60
+        }
+      ]
+    },
     "integrations": {
       "type": "array",
       "maxItems": 50,
-      "items": { "$ref": "#/definitions/integration" }
+      "items": {
+        "$ref": "#/definitions/integration"
+      }
     }
   },
   "definitions": {
-    "httpsUrl": {
+    "text": {
+      "description": "Plain text: no control characters and no invisible or bidi formatting characters.",
       "type": "string",
-      "maxLength": 500,
-      "pattern": "^https://[^/?#@\\s]+([/?#]\\S*)?$"
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u061C\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F\\uFEFF\\uFFF9-\\uFFFB]*$"
+    },
+    "httpsUrl": {
+      "description": "https, no user name or password, at most 500 characters.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/text"
+        },
+        {
+          "maxLength": 500,
+          "pattern": "^https://[^/?#@\\s]+([/?#]\\S*)?$"
+        }
+      ]
     },
     "host": {
+      "description": "An exact lowercase host name with at least two labels. No wildcards, ports or IP addresses.",
       "type": "string",
       "maxLength": 253,
       "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$",
-      "not": { "pattern": "^[0-9.]+$" }
+      "not": {
+        "pattern": "^[0-9.]+$"
+      }
+    },
+    "templateRoom": {
+      "description": "Text whose only braces are complete {room} placeholders.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/text"
+        },
+        {
+          "maxLength": 500,
+          "pattern": "^([^{}]|\\{room\\})*$"
+        }
+      ]
     },
     "integration": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "description", "version", "permissions"],
+      "required": [
+        "id",
+        "name",
+        "description",
+        "version",
+        "permissions"
+      ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 40 },
-        "description": { "type": "string", "minLength": 1, "maxLength": 400 },
-        "version": { "type": "string", "minLength": 1, "maxLength": 20 },
-        "icon": { "$ref": "#/definitions/httpsUrl" },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "name": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 40
+            }
+          ]
+        },
+        "description": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 400
+            }
+          ]
+        },
+        "version": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 20
+            }
+          ]
+        },
+        "icon": {
+          "$ref": "#/definitions/httpsUrl"
+        },
         "permissions": {
           "type": "object",
           "additionalProperties": false,
@@ -43,12 +126,29 @@
             "linkCards": {
               "type": "array",
               "maxItems": 10,
-              "items": { "$ref": "#/definitions/linkCard" }
+              "items": {
+                "$ref": "#/definitions/linkCard"
+              }
             },
             "composerActions": {
               "type": "array",
               "maxItems": 6,
-              "items": { "$ref": "#/definitions/composerAction" }
+              "items": {
+                "$ref": "#/definitions/composerAction"
+              }
+            },
+            "commands": {
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "$ref": "#/definitions/command"
+              }
+            },
+            "api": {
+              "$ref": "#/definitions/api"
+            },
+            "widget": {
+              "$ref": "#/definitions/widget"
             }
           }
         }
@@ -57,35 +157,318 @@
     "linkCard": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hosts", "title"],
+      "required": [
+        "hosts",
+        "title"
+      ],
       "properties": {
         "hosts": {
           "type": "array",
           "minItems": 1,
           "maxItems": 10,
           "uniqueItems": true,
-          "items": { "$ref": "#/definitions/host" }
+          "items": {
+            "$ref": "#/definitions/host"
+          }
         },
-        "pathPrefix": { "type": "string", "maxLength": 200, "pattern": "^/[^?#\\s\\\\]*$" },
-        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "subtitle": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "buttonLabel": { "type": "string", "minLength": 1, "maxLength": 24 },
-        "icon": { "$ref": "#/definitions/httpsUrl" }
+        "pathPrefix": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^/[^?#\\s\\\\]*$"
+        },
+        "title": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 120
+            }
+          ]
+        },
+        "subtitle": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 120
+            }
+          ]
+        },
+        "buttonLabel": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 24
+            }
+          ]
+        },
+        "icon": {
+          "$ref": "#/definitions/httpsUrl"
+        }
       }
     },
     "composerAction": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "label", "insert"],
+      "required": [
+        "id",
+        "label",
+        "insert"
+      ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
-        "label": { "type": "string", "minLength": 1, "maxLength": 24 },
-        "icon": { "enum": ["send", "download", "link", "plus"] },
-        "insert": {
+        "id": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 500,
-          "pattern": "^([^{}]|\\{room\\})*$"
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+        },
+        "label": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 24
+            }
+          ]
+        },
+        "icon": {
+          "enum": [
+            "send",
+            "download",
+            "link",
+            "plus"
+          ]
+        },
+        "insert": {
+          "$ref": "#/definitions/templateRoom"
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,23}$"
+        },
+        "description": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 80
+            }
+          ]
+        },
+        "usage": {
+          "description": "Must be \"/<name>\" or start with \"/<name> \" (checked by validate.yml).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 60,
+              "pattern": "^/[a-z][a-z0-9-]{1,23}( .*)?$"
+            }
+          ]
+        },
+        "insert": {
+          "description": "Text put into the message box. Placeholders: {room} and {args}.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 500,
+              "pattern": "^([^{}]|\\{room\\}|\\{args\\})*$"
+            }
+          ]
+        },
+        "api": {
+          "description": "Id of an action in permissions.api.actions (checked by validate.yml).",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+        },
+        "widget": {
+          "description": "Opens this integration's widget. Needs permissions.widget (checked by validate.yml).",
+          "const": true
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "insert"
+          ]
+        },
+        {
+          "required": [
+            "api"
+          ]
+        },
+        {
+          "required": [
+            "widget"
+          ]
+        }
+      ]
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "actions"
+      ],
+      "properties": {
+        "host": {
+          "$ref": "#/definitions/host"
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/definitions/apiAction"
+          }
+        }
+      }
+    },
+    "apiAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+        },
+        "label": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 24
+            }
+          ]
+        },
+        "path": {
+          "description": "Starts with \"/\"; letters, digits and . _ ~ / - only; no \".\" or \"..\" segments.",
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^/[A-Za-z0-9._~/-]*$",
+          "not": {
+            "pattern": "(^|/)\\.{1,2}(/|$)"
+          }
+        },
+        "body": {
+          "description": "JSON body template. String values only; {room}, {text} and {args} are substituted.",
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]{1,32}$",
+            "not": {
+              "const": "__proto__"
+            }
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 200,
+            "allOf": [
+              {
+                "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u061C\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F\\uFEFF\\uFFF9-\\uFFFB]*$"
+              },
+              {
+                "pattern": "^([^{}]|\\{room\\}|\\{text\\}|\\{args\\})*$"
+              }
+            ]
+          }
+        },
+        "insertResultLink": {
+          "description": "Name of a string field in the JSON response that holds a link to insert into the message box.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_]{1,32}$"
+        }
+      }
+    },
+    "widget": {
+      "description": "RUNS CODE from the author's server in a sandboxed iframe. https only, no fragment, no \"$\", no theme or lang parameter, host with at least two labels (no IP address); a port is allowed. Must not be on Mudrix's own origin (checked by Mudrix).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "capabilities"
+      ],
+      "properties": {
+        "url": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 500,
+              "pattern": "^https://[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(:[0-9]{1,5})?([/?][^#$\\s]*)?$",
+              "not": {
+                "anyOf": [
+                  {
+                    "pattern": "^https://[0-9.]+(:[0-9]+)?([/?]|$)"
+                  },
+                  {
+                    "pattern": "[?&](theme|lang)(=|&|$)"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "name": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 40
+            }
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "send.message",
+              "read.messages",
+              "read.room",
+              "upload.file",
+              "download.file"
+            ]
+          }
+        },
+        "parameters": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "room_id",
+              "user_id",
+              "display_name"
+            ]
+          }
         }
       }
     }

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hello widget</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1b1b1f; --muted: #666; --line: #ccc; --accent: #3b5bdb; }
+  :root[data-theme="dark"] { --bg: #1b1b1f; --fg: #eee; --muted: #aaa; --line: #444; --accent: #8da2fb; }
+  body { margin: 0; padding: 12px; font: 14px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent);
+           background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  dl { margin: 12px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; word-break: break-all; }
+  #error { color: #c92a2a; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>Hello widget (Mudrix example)</h1>
+<button id="hello" disabled>Say hello</button>
+<div id="error" role="alert"></div>
+<dl>
+  <dt>widget id</dt><dd id="wid">waiting for the client...</dd>
+  <dt>room_id</dt><dd id="room">-</dd>
+  <dt>requested</dt><dd id="requested">-</dd>
+  <dt>granted</dt><dd id="granted">not yet</dd>
+</dl>
+
+<script>
+// A dependency-free speaker of the Matrix Widget API (MSC2762) over raw postMessage.
+//
+// Message shape, both directions: { api, widgetId, requestId, action, data }, and a reply is the
+// same object plus a `response` field. api is 'toWidget' for messages the client sends us and
+// 'fromWidget' for messages we send.
+//
+// How the widgetId reaches the widget: matrix-widget-api drops every message whose widgetId is
+// empty or different from the one the client was created with. Element-style clients substitute
+// $matrix_widget_id into the widget URL. Mudrix's manifest does not allow `$` in the URL and
+// only adds theme, lang and the declared parameters, so this page instead takes the id from the
+// first message of the client. That works because the client speaks first: when the iframe has
+// loaded, it sends the toWidget request `capabilities`, which carries its own widgetId. We must
+// therefore be listening before the load event, which is why the listener is registered here.
+// (A `widgetId` or `widget_id` URL parameter is still honoured if one is ever present.)
+(function () {
+  var params = new URLSearchParams(location.search);
+  var roomId = params.get('room_id');
+  var widgetId = params.get('widgetId') || params.get('widget_id') || null;
+  var counter = 0;
+  var pending = {};
+
+  var theme = params.get('theme');
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  if (params.get('lang')) document.documentElement.lang = params.get('lang');
+
+  var $ = function (id) { return document.getElementById(id); };
+  var btn = $('hello');
+  var show = function (id, text) { $(id).textContent = text; };
+  var showError = function (text) { $('error').textContent = text || ''; };
+
+  // The strings from Mudrix's catalogue: send.message = send.event:m.room.message + the timeline
+  // capability for the room; the room id is what the room_id parameter is for.
+  var requested = ['org.matrix.msc2762.send.event:m.room.message'];
+  if (roomId) requested.push('org.matrix.msc2762.timeline:' + roomId);
+  show('room', roomId || 'missing: the manifest must list "room_id" in widget.parameters');
+  show('requested', requested.join('\n'));
+  $('requested').style.whiteSpace = 'pre-wrap';
+
+  var granted = null;
+
+  function post(message) {
+    // Mudrix's origin is not known to this page, so the target origin is '*'. A real widget
+    // should pin the origin it learns from event.origin of the first client message.
+    window.parent.postMessage(message, '*');
+  }
+
+  function reply(request, response) {
+    post(Object.assign({}, request, { response: response }));
+  }
+
+  function request(action, data) {
+    return new Promise(function (resolve, reject) {
+      if (!widgetId) return reject(new Error('The client has not told us the widget id yet'));
+      var requestId = 'hello-' + Date.now() + '-' + counter++;
+      pending[requestId] = { resolve: resolve, reject: reject };
+      setTimeout(function () {
+        if (pending[requestId]) { delete pending[requestId]; reject(new Error('Request timed out')); }
+      }, 15000);
+      post({ api: 'fromWidget', widgetId: widgetId, requestId: requestId, action: action, data: data });
+    });
+  }
+
+  function learnId(id) {
+    if (widgetId || !id) return;
+    widgetId = id;
+    show('wid', widgetId);
+    // Optional, and harmless: ask which API versions the client supports.
+    request('supported_api_versions', {}).then(function (r) {
+      console.log('client supports', r.supported_versions);
+    }, function () {});
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window.parent) return;
+    var m = ev.data;
+    if (!m || typeof m !== 'object' || !m.requestId || !m.action || !m.widgetId) return;
+    if (widgetId && m.widgetId !== widgetId) return;
+
+    if (m.api === 'fromWidget' && m.response !== undefined) {
+      // The answer to one of our requests.
+      learnId(m.widgetId);
+      var p = pending[m.requestId];
+      if (!p) return;
+      delete pending[m.requestId];
+      if (m.response && m.response.error) p.reject(new Error(m.response.error.message || 'Request failed'));
+      else p.resolve(m.response);
+      return;
+    }
+
+    if (m.api !== 'toWidget') return;
+    learnId(m.widgetId);
+
+    if (m.action === 'capabilities') {
+      // Step 1: the client asks what we need.
+      reply(m, { capabilities: requested });
+    } else if (m.action === 'notify_capabilities') {
+      // Step 2: the client tells us what the person approved.
+      granted = (m.data && m.data.approved) || [];
+      show('granted', granted.length ? granted.join('\n') : 'nothing');
+      $('granted').style.whiteSpace = 'pre-wrap';
+      btn.disabled = !(roomId && granted.indexOf('org.matrix.msc2762.send.event:m.room.message') !== -1);
+      if (btn.disabled) showError(roomId
+        ? 'Sending was not granted, so the button stays off.'
+        : 'No room_id parameter, so the button stays off.');
+      reply(m, {});
+    } else {
+      // theme_change, language_change, visibility, update_state, ...: acknowledge and ignore.
+      reply(m, {});
+    }
+  });
+
+  btn.addEventListener('click', function () {
+    showError('');
+    btn.disabled = true;
+    // No room_id in the request: the event goes to the room the widget is open in.
+    request('send_event', {
+      type: 'm.room.message',
+      content: { msgtype: 'm.text', body: 'Hello from the example widget' }
+    }).then(function (r) {
+      showError('');
+      console.log('sent', r);
+    }, function (e) {
+      showError(String(e.message || e));
+    }).then(function () { btn.disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>
