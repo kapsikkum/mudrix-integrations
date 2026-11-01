@@ -55,6 +55,29 @@
           "parameters": ["room_id"]
         }
       }
+    },
+    {
+      "id": "dev-file-share",
+      "name": "File share (dev)",
+      "description": "For local testing only: a widget that uploads a file, sends it as an m.file message and announces it with a custom event. Served by examples/dev-server.mjs. Do not publish.",
+      "version": "0.1.0",
+      "permissions": {
+        "commands": [
+          {
+            "name": "share",
+            "description": "Send a file",
+            "usage": "/share",
+            "widget": true
+          }
+        ],
+        "widget": {
+          "url": "http://localhost:8788/file-share/",
+          "name": "File share",
+          "capabilities": ["send.message", "upload.file"],
+          "parameters": ["room_id"],
+          "events": ["com.example.fileshare.sent"]
+        }
+      }
     }
   ]
 }

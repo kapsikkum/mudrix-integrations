@@ -182,9 +182,10 @@ function findTopLevel(text, name) {
   skipWs();
   if (text[i] !== '{') return null;
   i++;
+  let found = null;
   for (;;) {
     skipWs();
-    if (i >= n || text[i] === '}') return null;
+    if (i >= n || text[i] === '}') return found;
     if (text[i] === ',') {
       i++;
       continue;
@@ -201,7 +202,11 @@ function findTopLevel(text, name) {
     if (text[i] !== ':') return null;
     i++;
     const v = skipValue();
-    if (keyName === name) return { prop: { start: k.start, end: v.end }, value: v };
+    if (keyName === name) {
+      // JSON.parse (and Mudrix) use the last duplicate, so an edit to the first would change nothing.
+      if (found) fail(`repo.json has the top-level property "${name}" more than once. Remove the extra one.`);
+      found = { prop: { start: k.start, end: v.end }, value: v };
+    }
   }
 }
 
@@ -221,6 +226,11 @@ function readRepo(file) {
   if (!existsSync(file)) fail(`${file} not found.`);
   const bytes = readFileSync(file);
   const text = bytes.toString('utf8');
+  if (text.includes('\r'))
+    fail(
+      `${file} has Windows line endings (CRLF). Git converts them to LF when you commit, which would break the signature.\n` +
+        'Save it with LF line endings (in VS Code: click "CRLF" in the status bar and choose "LF"), then run this again.'
+    );
   let json;
   try {
     json = JSON.parse(text);
@@ -378,7 +388,7 @@ function cmdSign(argv) {
   if (!a.bump) {
     const head = committedRepo(file);
     if (head && head.serial === json.serial && head.text !== text)
-      console.log('\nReminder: repo.json changed but its serial is the same as in the last commit. Readers refuse a change that\ndoes not raise the serial. Run: npm run sign   (which uses --bump)');
+      console.log('\nReminder: repo.json changed but its serial is the same as in the last commit. Keep the serial rising: apps refuse an older copy of your file,\nwhich stops an old signed version being replayed.\nRun: npm run sign   (which uses --bump)');
     else if (!head && hadSig)
       console.log('\nReminder: if you changed repo.json since the last signature, raise "serial" (use --bump).');
   }

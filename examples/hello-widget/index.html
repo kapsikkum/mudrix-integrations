@@ -135,6 +135,9 @@
         ? 'Sending was not granted, so the button stays off.'
         : 'No room_id parameter, so the button stays off.');
       reply(m, {});
+    } else if (m.action === 'supported_api_versions') {
+      // The client asks before it answers read_events; an empty reply would leave a read request hanging.
+      reply(m, { supported_versions: ['0.0.1', '0.0.2', 'org.matrix.msc2762', 'org.matrix.msc2876'] });
     } else {
       // theme_change, language_change, visibility, update_state, ...: acknowledge and ignore.
       reply(m, {});

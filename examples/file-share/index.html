@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File share widget</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1b1b1f; --muted: #666; --line: #ccc; --accent: #3b5bdb; }
+  :root[data-theme="dark"] { --bg: #1b1b1f; --fg: #eee; --muted: #aaa; --line: #444; --accent: #8da2fb; }
+  body { margin: 0; padding: 12px; font: 14px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  h2 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent);
+           background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 16px; text-align: center; color: var(--muted); }
+  #drop.over { border-color: var(--accent); color: var(--fg); }
+  #drop label { color: var(--accent); text-decoration: underline; cursor: pointer; }
+  #picker { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #picker:focus-visible + #drop { outline: 2px solid var(--accent); }
+  #chosen { margin: 8px 0; min-height: 1.3em; word-break: break-all; }
+  #status { margin-top: 8px; color: var(--muted); white-space: pre-wrap; }
+  #error { color: #c92a2a; margin-top: 8px; white-space: pre-wrap; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 4px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
+  li .name { flex: 1; word-break: break-all; }
+  li .meta { color: var(--muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>File share (Mudrix example)</h1>
+
+<input id="picker" type="file">
+<div id="drop"><label for="picker" id="pickLabel">Choose a file</label> or drop it here (up to 25 MB)</div>
+<div id="chosen">No file chosen.</div>
+<button id="send" disabled>Send</button>
+<div id="status" role="status">Waiting for the client...</div>
+<div id="error" role="alert"></div>
+
+<h2>Recent transfers in this room</h2>
+<ul id="list"></ul>
+<div id="empty" style="color: var(--muted)">None yet.</div>
+
+<script>
+// A dependency-free speaker of the Matrix Widget API (MSC2762) over raw postMessage, built the same way
+// as examples/hello-widget (read its comments for the widget id, the origin and the message shape).
+//
+// What this page does when you press Send, in order:
+//   1. org.matrix.msc4039.upload_file   uploads the file; the answer holds `content_uri` (an mxc:// uri)
+//   2. send_event m.room.message        a normal m.file message, so every chat app shows the file
+//   3. send_event com.example.fileshare.sent   a custom event that only apps which know it will notice
+// The list under the button is built from the custom events: past ones with `org.matrix.msc2876.read_events`,
+// new ones as the client pushes them to us (toWidget `send_event`).
+//
+// NOTE: the Widget API upload is NOT encrypted. In an encrypted room the file is stored in the clear on the
+// server. See docs/writing-a-widget.md, "Sending files".
+
+// ---- helpers (pure, no DOM: tested separately in node) ----
+var EVENT_TYPE = 'com.example.fileshare.sent';        // must match "events" in the manifest
+var MAX_FILE_BYTES = 25 * 1024 * 1024;                // the client refuses anything larger
+var MAX_LIST = 20;
+
+function formatSize(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n < 0) return '?';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Returns an error text, or null when the file may be sent. Check before uploading anything.
+function checkFile(file) {
+  if (!file) return 'Choose a file first.';
+  if (file.size === 0) return 'The file is empty.';
+  if (file.size > MAX_FILE_BYTES) return 'The file is ' + formatSize(file.size) + ', the limit is ' + formatSize(MAX_FILE_BYTES) + '.';
+  return null;
+}
+
+function mimeOf(file) { return file.type || 'application/octet-stream'; }
+
+// The m.room.message content for a file that is already uploaded.
+function buildFileMessage(file, mxcUri) {
+  return { msgtype: 'm.file', body: file.name, url: mxcUri, info: { mimetype: mimeOf(file), size: file.size } };
+}
+
+// The custom event content. Keep it small (limit 8192 characters) and a plain object.
+function buildSentContent(file) {
+  return { name: file.name, size: file.size, mimetype: mimeOf(file) };
+}
+
+// Turns a room event into a list row, or null if it is not one of ours / is malformed.
+function parseTransfer(ev) {
+  if (!ev || ev.type !== EVENT_TYPE || !ev.content || typeof ev.content !== 'object') return null;
+  var c = ev.content;
+  if (typeof c.name !== 'string' || typeof c.size !== 'number') return null;
+  return { id: ev.event_id || null, name: c.name, size: c.size, ts: typeof ev.origin_server_ts === 'number' ? ev.origin_server_ts : Date.now() };
+}
+// ---- end helpers ----
+
+(function () {
+  var params = new URLSearchParams(location.search);
+  var roomId = params.get('room_id');
+  var widgetId = params.get('widgetId') || params.get('widget_id') || null;
+  var counter = 0;
+  var pending = {};
+
+  var theme = params.get('theme');
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  var lang = params.get('lang');
+  if (lang) document.documentElement.lang = lang;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var sendBtn = $('send');
+  var setStatus = function (t) { $('status').textContent = t || ''; };
+  var setError = function (t) { $('error').textContent = t || ''; };
+
+  var CAP_SEND_MSG = 'org.matrix.msc2762.send.event:m.room.message';
+  var CAP_UPLOAD = 'org.matrix.msc4039.upload_file';
+  var CAP_SEND_CUSTOM = 'org.matrix.msc2762.send.event:' + EVENT_TYPE;
+  var CAP_READ_CUSTOM = 'org.matrix.msc2762.receive.event:' + EVENT_TYPE;
+  var requested = [CAP_SEND_MSG, CAP_UPLOAD, CAP_SEND_CUSTOM, CAP_READ_CUSTOM];
+  if (roomId) requested.push('org.matrix.msc2762.timeline:' + roomId);
+
+  var granted = [];
+  var can = function (cap) { return granted.indexOf(cap) !== -1; };
+  var file = null;
+  var busy = false;
+  var transfers = [];   // newest first
+
+  function post(message) {
+    // Pin the client's origin in a real widget; see hello-widget.
+    window.parent.postMessage(message, '*');
+  }
+  function reply(request, response) { post(Object.assign({}, request, { response: response })); }
+
+  function request(action, data, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      if (!widgetId) return reject(new Error('The client has not told us the widget id yet'));
+      var requestId = 'fs-' + Date.now() + '-' + counter++;
+      pending[requestId] = { resolve: resolve, reject: reject };
+      setTimeout(function () {
+        if (pending[requestId]) { delete pending[requestId]; reject(new Error('Request timed out')); }
+      }, timeoutMs || 15000);
+      post({ api: 'fromWidget', widgetId: widgetId, requestId: requestId, action: action, data: data });
+    });
+  }
+
+  // Run one step of the send, and name the step in the error so the person knows what failed.
+  function step(label, promise) {
+    return promise.catch(function (e) {
+      var err = new Error(label + ' failed: ' + String(e && e.message || e));
+      err.step = label;
+      throw err;
+    });
+  }
+
+  // ---- the list ----
+  function renderList() {
+    var ul = $('list');
+    ul.textContent = '';
+    transfers.forEach(function (t) {
+      var li = document.createElement('li');
+      var name = document.createElement('span'); name.className = 'name'; name.textContent = t.name;
+      var meta = document.createElement('span'); meta.className = 'meta';
+      meta.textContent = formatSize(t.size) + ' · ' + new Date(t.ts).toLocaleString(lang || undefined);
+      li.appendChild(name); li.appendChild(meta); ul.appendChild(li);
+    });
+    $('empty').style.display = transfers.length ? 'none' : '';
+  }
+
+  function addTransfer(t) {
+    if (!t) return;
+    // The client may echo our own event, with a temporary id first: match on id, or on the same file at about the same time.
+    if (transfers.some(function (x) {
+      return (t.id && x.id === t.id) || (x.name === t.name && x.size === t.size && Math.abs(x.ts - t.ts) < 15000);
+    })) return;
+    transfers.push(t);
+    transfers.sort(function (a, b) { return b.ts - a.ts; });
+    transfers = transfers.slice(0, MAX_LIST);
+    renderList();
+  }
+
+  function loadHistory() {
+    if (!can(CAP_READ_CUSTOM)) return;
+    request('org.matrix.msc2876.read_events', { type: EVENT_TYPE, limit: MAX_LIST }).then(function (r) {
+      ((r && r.events) || []).forEach(function (ev) { addTransfer(parseTransfer(ev)); });
+    }, function (e) {
+      setError('Could not read earlier transfers: ' + String(e.message || e));
+    });
+  }
+
+  // ---- the file chooser ----
+  function updateButton() {
+    sendBtn.disabled = busy || !file || !can(CAP_UPLOAD) || !can(CAP_SEND_MSG);
+  }
+
+  function choose(f) {
+    file = f || null;
+    setError('');
+    var problem = file ? checkFile(file) : null;
+    if (problem) { setError(problem); file = null; }
+    $('chosen').textContent = file ? file.name + ' (' + formatSize(file.size) + ')' : 'No file chosen.';
+    updateButton();
+  }
+
+  $('picker').addEventListener('change', function (ev) { choose(ev.target.files && ev.target.files[0]); });
+  var drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (n) {
+    drop.addEventListener(n, function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (n) {
+    drop.addEventListener(n, function (ev) { ev.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (ev) {
+    choose(ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]);
+  });
+
+  // ---- sending ----
+  sendBtn.addEventListener('click', function () {
+    var f = file;
+    var problem = checkFile(f);
+    if (problem) return setError(problem);
+    busy = true; updateButton(); setError('');
+
+    setStatus('Uploading ' + f.name + '...');
+    // No room_id in any request below: everything goes to the room the widget is open in.
+    step('Upload', request(CAP_UPLOAD, { file: f }, 120000)).then(function (up) {
+      if (!up || typeof up.content_uri !== 'string') throw new Error('Upload failed: the client returned no content_uri');
+      setStatus('Uploaded. Sending the message...');
+      return step('Message', request('send_event', { type: 'm.room.message', content: buildFileMessage(f, up.content_uri) }));
+    }).then(function () {
+      if (!can(CAP_SEND_CUSTOM)) {
+        setStatus('File sent. The custom event was not sent because it was not approved.');
+        return;
+      }
+      setStatus('Message sent. Sending the custom event...');
+      return step('Custom event', request('send_event', { type: EVENT_TYPE, content: buildSentContent(f) })).then(function (r) {
+        addTransfer({ id: r && r.event_id || null, name: f.name, size: f.size, ts: Date.now() });
+        setStatus('Done: file, message and custom event sent.');
+      });
+    }).catch(function (e) {
+      var text = String(e && e.message || e);
+      if (/not (been )?(granted|allowed|approved)|capabilit|permission/i.test(text)) text += '\n(The client refused it: a capability was probably not approved.)';
+      setError(text);
+      setStatus('');
+    }).then(function () { busy = false; updateButton(); });
+  });
+
+  // ---- the Widget API conversation ----
+  function learnId(id) {
+    if (widgetId || !id) return;
+    widgetId = id;
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window.parent) return;
+    var m = ev.data;
+    if (!m || typeof m !== 'object' || !m.requestId || !m.action || !m.widgetId) return;
+    if (widgetId && m.widgetId !== widgetId) return;
+
+    if (m.api === 'fromWidget' && m.response !== undefined) {
+      learnId(m.widgetId);
+      var p = pending[m.requestId];
+      if (!p) return;
+      delete pending[m.requestId];
+      if (m.response && m.response.error) p.reject(new Error(m.response.error.message || 'Request failed'));
+      else p.resolve(m.response);
+      return;
+    }
+    if (m.api !== 'toWidget') return;
+    learnId(m.widgetId);
+
+    if (m.action === 'capabilities') {
+      reply(m, { capabilities: requested });
+    } else if (m.action === 'notify_capabilities') {
+      granted = (m.data && m.data.approved) || [];
+      var missing = requested.filter(function (c) { return !can(c); });
+      if (!roomId) setError('No room_id parameter: the manifest must list "room_id" in widget.parameters.');
+      else if (missing.length) setError('Not approved: ' + missing.join(', '));
+      setStatus(can(CAP_UPLOAD) && can(CAP_SEND_MSG) ? 'Ready. Choose a file.' : 'Sending is not possible without the upload and message capabilities.');
+      updateButton();
+      loadHistory();
+      reply(m, {});
+    } else if (m.action === 'supported_api_versions') {
+      // The client asks before it answers read_events. Without a list it cannot, and our read times out.
+      reply(m, { supported_versions: ['0.0.1', '0.0.2', 'org.matrix.msc2762', 'org.matrix.msc2876'] });
+    } else if (m.action === 'send_event') {
+      // A live event pushed to us (only types we may receive arrive).
+      addTransfer(parseTransfer(m.data));
+      reply(m, {});
+    } else {
+      // theme_change, language_change, visibility, update_state, ...: acknowledge and ignore.
+      reply(m, {});
+    }
+  });
+
+  renderList();
+})();
+</script>
+</body>
+</html>

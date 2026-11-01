@@ -161,8 +161,9 @@ account and do not re-add it until you know why.
 
 **"This repository is older than the version already seen."** The `serial` is lower than one Mudrix has already
 accepted. Either an old file is being served (a stale cache; wait and press Refresh), or you restored an older
-`repo.json`. Run `npm run sign` to raise the serial above the highest one you ever published. The same serial with
-changed content is also refused.
+`repo.json`. Run `npm run sign` to raise the serial above the highest one you ever published. (Mudrix refuses a
+lower serial. A file with the same serial but different content is accepted, so always raise it: that is what lets
+apps reject an old signed copy being replayed.)
 
 **"This device cannot check signatures."** The browser or system Mudrix runs in does not support Ed25519 through
 WebCrypto (older browsers). Use a current version of Chrome, Edge, Firefox or Safari, or the desktop app. Nothing is

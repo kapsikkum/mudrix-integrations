@@ -3,7 +3,7 @@
 //   node examples/dev-server.mjs
 //
 //   8787  mock API: POST /v1/push logs the JSON body and answers {"ok":true} (CORS: any origin)
-//   8788  serves examples/hello-widget/ (frameable from anywhere)
+//   8788  serves examples/hello-widget/ at / and examples/file-share/ at /file-share/ (frameable from anywhere)
 //   8789  serves examples/dev-repo.json as /repo.json plus /repo.json.sig (CORS: any origin).
 //         Mudrix refuses unsigned repositories, so the server adds "key" and "serial" and signs the
 //         exact bytes it serves with a throwaway key kept in examples/.dev-key.pem (git-ignored,
@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const widgetDir = join(here, 'hello-widget');
+const fileShareDir = join(here, 'file-share');
 
 // Throwaway signing key for the dev repository; never use it for anything real.
 const devKeyFile = join(here, '.dev-key.pem');
@@ -96,10 +97,20 @@ const widget = createServer(async (req, res) => {
   const headers = { 'Content-Security-Policy': 'frame-ancestors *', 'Cache-Control': 'no-store' };
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, headers, '');
   const url = new URL(req.url ?? '/', 'http://localhost');
-  let rel = decodeURIComponent(url.pathname);
+  let rel;
+  try {
+    rel = decodeURIComponent(url.pathname);
+  } catch {
+    return send(res, 400, headers, '');
+  }
+  let root = widgetDir;
+  if (rel.startsWith('/file-share/')) {
+    root = fileShareDir;
+    rel = rel.slice('/file-share'.length);
+  }
   if (rel.endsWith('/')) rel += 'index.html';
-  const file = normalize(join(widgetDir, rel));
-  if (file !== widgetDir && !file.startsWith(widgetDir + sep)) return send(res, 403, headers, '');
+  const file = normalize(join(root, rel));
+  if (file !== root && !file.startsWith(root + sep)) return send(res, 403, headers, '');
   try {
     const data = await readFile(file);
     const ext = file.slice(file.lastIndexOf('.'));
@@ -125,7 +136,7 @@ const repo = createServer(async (req, res) => {
 
 for (const [name, server, port] of [
   ['mock api', api, 8787],
-  ['hello widget', widget, 8788],
+  ['widgets', widget, 8788],
   ['dev repo', repo, 8789],
 ]) {
   server.on('error', (e) => {

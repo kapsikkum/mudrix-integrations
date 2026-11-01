@@ -482,6 +482,21 @@
               "display_name"
             ]
           }
+        },
+        "events": {
+          "description": "Custom room events (never state) the widget may send and read in the one room it is opened in. Reverse DNS names such as com.example.fileshare.sent. Not m, m.*, org.matrix.*, im.vector.* or io.element.*. Send limits: a plain JSON object of at most 8192 characters, no top-level m.relates_to or m.mentions.",
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 80,
+            "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*){2,}$",
+            "not": {
+              "pattern": "^(m|org\\.matrix|im\\.vector|io\\.element)(\\.|$)"
+            }
+          }
         }
       }
     }

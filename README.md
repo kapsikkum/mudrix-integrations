@@ -41,7 +41,7 @@ You need a GitHub account, Node 20 or newer, and about five minutes.
    | Links and buttons | `linkCards`, `composerActions` | Cards for links, buttons that put text in the message box | Nothing leaves their device |
    | Commands | `commands` | Slash commands such as `/push note` in the message box autocomplete | Same: they insert text, or trigger one of the tiers below |
    | API | `api` | Calls **one host** with up to 4 fixed POST requests | The exact request, and a confirmation **every time** |
-   | Widget | `widget` | Opens your web page inside Mudrix, which can send and read messages in that room if allowed | **A red "this runs code" warning** and an explicit tick to install |
+   | Widget | `widget` | Opens your web page inside Mudrix, which can send and read messages, send files and use up to 3 custom event types of its own in that room if allowed | **A red "this runs code" warning** and an explicit tick to install |
 
 4. **`npm run sign`**. Run it after every edit: it raises `serial` and signs again.
 5. **Commit and push** both `repo.json` and `repo.json.sig`.
@@ -61,7 +61,8 @@ plain `https://.../repo.json`, which must have its signature at `https://.../rep
 must be named `repo.json` and `repo.json.sig` and sit at the root of the repository.
 
 To try commands, an api action and a widget without publishing anything, see [`examples/`](examples/): a local
-dev server (it signs its dev repository with a throwaway key), a sample widget and a dev-only repository.
+dev server (it signs its dev repository with a throwaway key), two sample widgets (`hello-widget`, `file-share`)
+and a dev-only repository.
 
 ## Signing and trust
 
@@ -199,6 +200,7 @@ can do only what the person approves from a fixed list of capabilities.
 | `name` | optional | up to 40 characters; defaults to the integration's name |
 | `capabilities` | required | a list from the table below, without repeats; `[]` means the widget can only display |
 | `parameters` | optional | extra values Mudrix may add to the address: `room_id`, `user_id`, `display_name`. Mudrix always adds `theme` (`light` or `dark`) and `lang` |
+| `events` | optional | up to 3 custom room event types the widget may send and read in that room, never state events. Reverse DNS names such as `com.example.fileshare.sent`: lowercase letters, digits, `.`, `_`, `-`, 5 to 80 characters, at least three dot-separated parts. `m`, `m.*`, `org.matrix.*`, `im.vector.*` and `io.element.*` are refused. The reader approves the exact names, and a change needs approval again. Sent content is a plain JSON object of at most 8192 characters, with no top-level `m.relates_to` or `m.mentions`. Most chat apps show nothing for these events, but other apps in the room can see them |
 
 | capability | risk | allows |
 | --- | --- | --- |
@@ -208,8 +210,10 @@ can do only what the person approves from a fixed list of capabilities.
 | `upload.file` | high | upload a file to the person's media repository |
 | `download.file` | high | download a file from the person's media repository |
 
+Files are limited to 25 MB. The Widget API upload is not encrypted, even in an encrypted room.
+
 Every grant is limited to the **one room** the widget is opened in. There is no way to ask for other rooms, other
-event types, state changes, account data or to-device messages.
+event types than `m.room.message` and the ones you list in `events`, state changes, account data or to-device messages.
 
 ### Limits that apply to everything
 
@@ -222,7 +226,8 @@ overrides). Unknown fields anywhere are an error, not ignored. The whole file ma
 A widget is a web page that speaks the Widget API with `postMessage`. [`docs/writing-a-widget.md`](docs/writing-a-widget.md)
 covers the handshake, the capabilities, the headers your server must send and how to test locally. Start from
 [`examples/hello-widget/index.html`](examples/hello-widget/index.html), a single dependency-free page that sends a
-message. Is your service a good fit for a widget? A proposal for one real case is in
+message, and [`examples/file-share/index.html`](examples/file-share/index.html), which uploads a file, sends it
+as a message and announces it with a custom event. Is your service a good fit for a widget? A proposal for one real case is in
 [`docs/altersend-widget-spec.md`](docs/altersend-widget-spec.md).
 
 ## How flexible is it?
@@ -278,6 +283,7 @@ install a widget from an author you trust to keep it safe.
 
 ## Contributing
 
-Open a pull request that adds your integration to `repo.json`. The validate check must pass. Please keep
+Open a pull request that adds your integration to `repo.json`. The schema and cross-reference checks must pass
+(the signature check only runs after a merge, because the maintainer signs then). Please keep
 descriptions factual and list every host the integration really needs, and no more. Do not edit `repo.json.sig` or
 `serial`: the maintainer raises the serial and signs with the official key when merging.
