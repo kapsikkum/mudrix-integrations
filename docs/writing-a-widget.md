@@ -104,13 +104,15 @@ topic; no other event types, no state changes, no account data, no to-device mes
 The repository includes everything for a local loop, with no deployment.
 
 1. In this repository run `node examples/dev-server.mjs`. It listens on `8787` (a mock API), `8788` (the
-   `examples/hello-widget/` page, with `frame-ancestors *`) and `8789` (`examples/dev-repo.json` as `/repo.json`).
+   `examples/hello-widget/` page, with `frame-ancestors *`) and `8789` (`examples/dev-repo.json` as `/repo.json`, with `key` and `serial` added and a matching `/repo.json.sig`).
+   Mudrix refuses unsigned repositories, so the server signs what it serves with a throwaway key it keeps in
+   `examples/.dev-key.pem` (git-ignored); keep that file between runs, otherwise Mudrix reports that the key changed.
 2. Start Mudrix in **development mode** (the Vite dev server of the Mudrix repository). Only dev builds accept
    `localhost` / `127.0.0.1` hosts for `api.host` and `widget.url`.
 3. In Settings > Integrations > Repositories add `http://localhost:8789/repo.json`, install "Dev example"
    (tick the code warning), open a room and type `/hello`. Press **Say hello** and the message appears in the room.
 4. Edit `examples/hello-widget/index.html` and reload; for your own widget copy the example and change the
-   `widget.url` and `capabilities` in a copy of `examples/dev-repo.json`. A changed capability list needs approval
+   `widget.url` and `capabilities` in `examples/dev-repo.json` (do not add `key` or `serial` there: the server does). A changed capability list needs approval
    again.
 
 > The example has not yet been loaded in a real Mudrix build. If something does not match this guide, the Widget

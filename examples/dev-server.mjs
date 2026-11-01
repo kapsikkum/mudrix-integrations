@@ -4,16 +4,37 @@
 //
 //   8787  mock API: POST /v1/push logs the JSON body and answers {"ok":true} (CORS: any origin)
 //   8788  serves examples/hello-widget/ (frameable from anywhere)
-//   8789  serves examples/dev-repo.json as /repo.json (CORS: any origin)
+//   8789  serves examples/dev-repo.json as /repo.json plus /repo.json.sig (CORS: any origin).
+//         Mudrix refuses unsigned repositories, so the server adds "key" and "serial" and signs the
+//         exact bytes it serves with a throwaway key kept in examples/.dev-key.pem (git-ignored,
+//         created on first run, so the key is the same between runs).
 //
 // DEV ONLY: everything here allows any origin. Never expose these ports.
 import { createServer } from 'node:http';
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const widgetDir = join(here, 'hello-widget');
+
+// Throwaway signing key for the dev repository; never use it for anything real.
+const devKeyFile = join(here, '.dev-key.pem');
+if (!existsSync(devKeyFile)) {
+  const pem = generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' });
+  writeFileSync(devKeyFile, pem, { mode: 0o600 });
+}
+const devPrivateKey = createPrivateKey(readFileSync(devKeyFile, 'utf8'));
+const devPublicKey = Buffer.from(createPublicKey(devPrivateKey).export({ format: 'jwk' }).x, 'base64url').toString('base64');
+
+/** The exact bytes served as /repo.json (the template plus key and serial) and their signature. */
+async function signedDevRepo() {
+  const { schema, name, ...rest } = JSON.parse(await readFile(join(here, 'dev-repo.json'), 'utf8'));
+  const bytes = Buffer.from(JSON.stringify({ schema, name, key: devPublicKey, serial: 1, ...rest }, null, 2) + '\n');
+  return { bytes, sig: Buffer.from(sign(null, bytes, devPrivateKey).toString('base64') + '\n') };
+}
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -91,12 +112,14 @@ const widget = createServer(async (req, res) => {
 const repo = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, cors);
   const url = new URL(req.url ?? '/', 'http://localhost');
-  if (url.pathname !== '/repo.json') return send(res, 404, cors, 'not found');
+  if (url.pathname !== '/repo.json' && url.pathname !== '/repo.json.sig') return send(res, 404, cors, 'not found');
   try {
-    const data = await readFile(join(here, 'dev-repo.json'));
-    return send(res, 200, { ...cors, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, data);
+    const { bytes, sig } = await signedDevRepo();
+    const isSig = url.pathname.endsWith('.sig');
+    const type = isSig ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8';
+    return send(res, 200, { ...cors, 'Content-Type': type, 'Cache-Control': 'no-store' }, isSig ? sig : bytes);
   } catch {
-    return send(res, 500, cors, 'dev-repo.json missing');
+    return send(res, 500, cors, 'dev-repo.json missing or invalid');
   }
 });
 

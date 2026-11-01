@@ -1,0 +1,14 @@
+{
+  "name": "mudrix-integrations",
+  "private": true,
+  "type": "module",
+  "description": "A Mudrix integration repository. Signing tools: no dependencies.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "init": "node scripts/sign.mjs init",
+    "sign": "node scripts/sign.mjs sign --bump",
+    "verify": "node scripts/sign.mjs verify",
+    "dev": "node examples/dev-server.mjs",
+    "check": "node scripts/sign.mjs verify && npx --yes ajv-cli@5.0.0 validate --strict=false -s repo.schema.json -d repo.json"
+  }
+}

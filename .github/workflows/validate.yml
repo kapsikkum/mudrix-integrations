@@ -1,6 +1,6 @@
 name: Validate
 
-# Checks repo.json against repo.schema.json, then the rules a schema cannot express:
+# Checks that repo.json.sig is a valid signature of repo.json, then repo.json against repo.schema.json, then the rules a schema cannot express:
 # unique ids and command names, and that commands point at things the integration really has.
 # Mudrix is the final validator; add the repository in Settings > Integrations to see its verdict.
 on:
@@ -15,6 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Signature
+        run: node scripts/sign.mjs verify repo.json
       - name: Schema
         run: npx --yes ajv-cli@5.0.0 validate --strict=false -s repo.schema.json -d repo.json
       - name: Cross-references

@@ -1,6 +1,8 @@
 {
   "schema": 1,
   "name": "Mudrix integrations",
+  "key": "AcV0kn9xQsh7H9G76k7cDoJWRAeAjhhqUTnc2hHw85A=",
+  "serial": 1,
   "integrations": [
     {
       "id": "altersend",

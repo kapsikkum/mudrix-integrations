@@ -4,7 +4,7 @@ A repository of integrations for [Mudrix](https://github.com/kapsikkum/mudrix-we
 description in a JSON file: which links to recognise, which buttons and slash commands to add to the message box,
 which one web service it may call, and, only if its author asks for it, a widget page that runs code.
 
-Almost everything here is **data only**: nothing from this repository runs in Mudrix. The one exception is the
+This repository is signed (see [Signing and trust](#signing-and-trust)). Almost everything here is **data only**: nothing from this repository runs in Mudrix. The one exception is the
 `widget` capability, which loads a page from the author's own server. Mudrix says so in red before it is installed
 (see [Writing a widget](#writing-a-widget) and [How people are protected](#how-people-are-protected)).
 
@@ -26,47 +26,15 @@ permission can be turned off again under **Installed > Permissions**.
 
 ## Make your own
 
-You need a GitHub account and about five minutes.
+You need a GitHub account, Node 20 or newer, and about five minutes.
 
-1. **Create a repository** on GitHub (public, any name) and add a file named `repo.json` at its root.
-2. **Start from this** (a single integration with one button and one link card):
-
-   ```json
-   {
-     "schema": 1,
-     "name": "My integrations",
-     "integrations": [
-       {
-         "id": "my-service",
-         "name": "My Service",
-         "description": "One or two sentences on what it does, shown before anyone installs it.",
-         "version": "1.0.0",
-         "permissions": {
-           "linkCards": [
-             {
-               "hosts": ["example.com"],
-               "pathPrefix": "/share/",
-               "title": "My Service share",
-               "subtitle": "Opens in your browser",
-               "buttonLabel": "Open"
-             }
-           ],
-           "composerActions": [
-             {
-               "id": "share",
-               "label": "Share",
-               "icon": "link",
-               "insert": "https://example.com/share/new?room={room}"
-             }
-           ]
-         }
-       }
-     ]
-   }
-   ```
-
-   **Choose what your integration needs.** Use the smallest tier that does the job; people trust (and install)
-   small integrations more readily.
+1. **Get the files.** Open the [template repository](https://github.com/kapsikkum/mudrix-integration-template)
+   and press **Use this template**, then clone your copy. (Or copy `scripts/`, `package.json`, `.gitignore`,
+   `.gitattributes`, `repo.schema.json` and `.github/` from this repository.)
+2. **`npm run init`**. It creates your signing key, puts the public half into `repo.json`, signs it, and prints a
+   **fingerprint** and where the key was saved. **Back that key up** and never commit it.
+3. **Edit `repo.json`.** Start from the one integration in it, and choose the smallest tier that does the job;
+   people trust (and install) small integrations more readily.
 
    | tier | permissions | what it does | what the person sees |
    | --- | --- | --- | --- |
@@ -75,34 +43,61 @@ You need a GitHub account and about five minutes.
    | API | `api` | Calls **one host** with up to 4 fixed POST requests | The exact request, and a confirmation **every time** |
    | Widget | `widget` | Opens your web page inside Mudrix, which can send and read messages in that room if allowed | **A red "this runs code" warning** and an explicit tick to install |
 
-3. **Commit and push.** Optionally copy `repo.schema.json` and `.github/workflows/validate.yml` from this
-   repository: the workflow checks `repo.json` on every push (the schema, plus references the schema cannot
-   express, such as a command pointing at an api action that exists), and editors that support JSON Schema can use
-   the schema while you type.
-4. **Add it in Mudrix** (Settings > Integrations > Repositories) with `https://github.com/<you>/<repo>`. A
-   mistake is reported with the path of the field, such as
-   `repo.integrations[0].permissions.linkCards[0].hosts[0]: must be lowercase`. Mudrix is the final
-   validator.
-5. **Share the URL.** Anyone can add it the same way.
+4. **`npm run sign`**. Run it after every edit: it raises `serial` and signs again.
+5. **Commit and push** both `repo.json` and `repo.json.sig`.
+6. **Add it in Mudrix** (Settings > Integrations > Repositories) with `https://github.com/<you>/<repo>`, and check
+   that the fingerprint Mudrix shows is the one `init` printed. A mistake in the file is reported with the path of
+   the field, such as `repo.integrations[0].permissions.linkCards[0].hosts[0]: must be lowercase`. Mudrix is the
+   final validator.
+7. **Share the URL.** Anyone can add it the same way.
 
-To publish a change, edit `repo.json`, raise `version`, push, and press **Refresh** next to the repository in
-Mudrix. GitHub's raw file cache can take a few minutes to catch up.
+To publish a change, edit `repo.json`, raise the integration's `version`, run `npm run sign`, push, and press
+**Refresh** next to the repository in Mudrix. GitHub's raw file cache can take a few minutes to catch up. More on
+keys, errors and CI in [`docs/signing.md`](docs/signing.md).
 
 Accepted addresses: `https://github.com/<you>/<repo>` (the default branch), a branch or tag of it as
 `https://github.com/<you>/<repo>/tree/<branch>` (handy for trying a change before it is on the main branch), or any
-plain `https://.../repo.json`. On GitHub the file must be named `repo.json` and sit at the root of the repository.
+plain `https://.../repo.json`, which must have its signature at `https://.../repo.json.sig`. On GitHub the files
+must be named `repo.json` and `repo.json.sig` and sit at the root of the repository.
 
 To try commands, an api action and a widget without publishing anything, see [`examples/`](examples/): a local
-dev server, a sample widget and a dev-only repository.
+dev server (it signs its dev repository with a throwaway key), a sample widget and a dev-only repository.
+
+## Signing and trust
+
+Every repository is `repo.json` plus a signature, `repo.json.sig`. Mudrix rejects a repository without a valid
+one, with no way to override.
+
+- **What is checked.** The signature is an Ed25519 signature of the exact bytes of `repo.json`, made with the
+  private key whose public half is the file's `key`. A file that was altered after signing, or whose signature is
+  missing, is refused.
+- **The trust prompt.** The first time someone adds a repository, Mudrix shows the key's **fingerprint** (eight
+  groups of four hex digits, such as `080e ffe6 20f6 a24d fdaf de75 dd9b 8e71`). Compare it with the one the author
+  published, then accept. The repository is **pinned** to that key from then on.
+- **"Official".** Mudrix ships the public key of this repository and shows repositories signed with it as
+  "Official". Every other repository is shown with its fingerprint instead.
+- **If a key changes.** Mudrix refuses the repository until it is removed and added again, and the person checks
+  the new fingerprint. There is no "trust anyway".
+- **The serial.** `serial` must go up with every published change (`npm run sign` does it). Mudrix refuses a lower
+  number than it has seen, so an old signed file cannot be served again.
+- **What a signature does not prove.** It says who published the file and that it was not changed. It does **not**
+  vouch for a widget's code, which is served live by the widget's own host and can change at any time. Only
+  install a widget from an author you trust.
+- **Key safety.** Back the private key up (a password manager is fine). If you lose it you can no longer publish
+  updates: readers have to remove the repository and add it again under a new key. Never commit it.
 
 ## Reference
 
 ### The repository file
 
+Next to `repo.json` sits `repo.json.sig`, the signature of its exact bytes (see [Signing and trust](#signing-and-trust)).
+
 | field | | |
 | --- | --- | --- |
 | `schema` | required | always `1` |
 | `name` | required | up to 60 characters, shown in the repository list |
+| `key` | required | the repository's Ed25519 public key: standard base64 of the 32 raw bytes (44 characters ending in `=`). `npm run init` fills it in. Changing it makes readers remove and re-add the repository |
+| `serial` | required | an integer from 1 to 2147483647 that must go up with every published change (`npm run sign` does it). Mudrix refuses a lower one than it has seen |
 | `integrations` | required | up to 50 integrations |
 
 ### An integration
@@ -259,6 +254,9 @@ The other tiers are data only; the widget is the only way to get a live status p
 
 ## How people are protected
 
+- A repository must be signed. The first time it is added, the person confirms its key's fingerprint; the
+  repository is then pinned to that key, a changed key is refused, and a lower `serial` is refused (rollback
+  protection).
 - Installing shows the full list of everything the integration asks for, with the hosts, buttons, commands, api
   actions and the widget address; nothing is on until it is confirmed.
 - An integration with a widget also shows a red **Code** warning and can only be installed after the person ticks
@@ -281,4 +279,5 @@ install a widget from an author you trust to keep it safe.
 ## Contributing
 
 Open a pull request that adds your integration to `repo.json`. The validate check must pass. Please keep
-descriptions factual and list every host the integration really needs, and no more.
+descriptions factual and list every host the integration really needs, and no more. Do not edit `repo.json.sig` or
+`serial`: the maintainer raises the serial and signs with the official key when merging.

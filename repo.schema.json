@@ -1,12 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Mudrix integrations repository (schema 1)",
-  "description": "A structural check for editors and CI, written to match Mudrix's own validator. It cannot express cross-references (a command's api target must exist in api.actions, a widget command needs permissions.widget, an api command needs permissions.api, ids and command names must be unique): validate.yml checks those. Mudrix itself is the final validator. Notes: localhost hosts are accepted only by Mudrix dev builds and are not valid here; lengths count code points here but UTF-16 units in Mudrix.",
+  "description": "A structural check for editors and CI, written to match Mudrix's own validator. It cannot express cross-references (a command's api target must exist in api.actions, a widget command needs permissions.widget, an api command needs permissions.api, ids and command names must be unique): validate.yml checks those. The signature itself (repo.json.sig) is not a schema matter: it is checked by `node scripts/sign.mjs verify`. Mudrix itself is the final validator. Notes: localhost hosts are accepted only by Mudrix dev builds and are not valid here; lengths count code points here but UTF-16 units in Mudrix.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema",
     "name",
+    "key",
+    "serial",
     "integrations"
   ],
   "properties": {
@@ -22,6 +24,17 @@
           "maxLength": 60
         }
       ]
+    },
+    "key": {
+      "description": "The repository's Ed25519 public key: standard base64 of the 32 raw bytes (44 characters). repo.json.sig must be a signature of the exact bytes of this file made with the matching private key.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{43}=$"
+    },
+    "serial": {
+      "description": "Raise by one with every published change; Mudrix refuses a lower number than it has already seen.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
     },
     "integrations": {
       "type": "array",

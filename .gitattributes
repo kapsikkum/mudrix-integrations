@@ -1,0 +1,3 @@
+# The signature covers the exact bytes of repo.json: never let git change its line endings.
+repo.json text eol=lf
+repo.json.sig text eol=lf
