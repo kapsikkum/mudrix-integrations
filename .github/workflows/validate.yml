@@ -1,0 +1,30 @@
+name: Validate
+
+# Checks repo.json against repo.schema.json and that integration ids are unique.
+# Mudrix is the final validator; add the repository in Settings > Integrations to see its verdict.
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Schema
+        run: npx --yes ajv-cli@5.0.0 validate --strict=false -s repo.schema.json -d repo.json
+      - name: Unique ids
+        run: |
+          node -e '
+            const r = require("./repo.json");
+            const ids = r.integrations.map((i) => i.id);
+            const dup = ids.filter((id, n) => ids.indexOf(id) !== n);
+            if (dup.length) { console.error("duplicate ids: " + dup.join(", ")); process.exit(1); }
+            for (const i of r.integrations) {
+              const a = (i.permissions.composerActions || []).map((x) => x.id);
+              if (new Set(a).size !== a.length) { console.error(i.id + ": duplicate action ids"); process.exit(1); }
+            }
+          '
