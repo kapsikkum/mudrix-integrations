@@ -2,22 +2,177 @@
   "schema": 1,
   "name": "Mudrix integrations",
   "key": "AcV0kn9xQsh7H9G76k7cDoJWRAeAjhhqUTnc2hHw85A=",
-  "serial": 1,
+  "serial": 2,
   "integrations": [
     {
       "id": "altersend",
       "name": "AlterSend",
-      "description": "AlterSend sends files straight from one device to another, end-to-end encrypted, without a server in between. This shows AlterSend share links as transfer cards that open in your browser.",
-      "version": "1.0.0",
+      "description": "AlterSend sends files straight from one device to another, end-to-end encrypted, without a server in between. This shows AlterSend share links as transfer cards. The Download button opens the transfer in a window inside Mudrix (the page is AlterSend's own code, loaded only when you press it), or you can open it in your browser.",
+      "version": "1.1.0",
       "permissions": {
         "linkCards": [
           {
             "hosts": ["app.altersend.com"],
+            "pathPrefix": "/r",
             "title": "AlterSend transfer",
-            "subtitle": "Opens in your browser",
-            "buttonLabel": "Open"
+            "subtitle": "Sent straight from the sender's device, end-to-end encrypted",
+            "buttonLabel": "Open in browser"
           }
-        ]
+        ],
+        "widget": {
+          "url": "https://app.altersend.com/",
+          "name": "AlterSend",
+          "capabilities": [],
+          "fromLinks": true,
+          "linkLabel": "Download",
+          "saveFiles": true
+        }
+      }
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "Shows github.com links to repositories, issues and pull requests as cards: a repository's name, description, stars, language and forks, or an issue's title and state. Your device asks GitHub's public API (api.github.com) for these, without cookies; in encrypted rooms only when you press the card's button. Private repositories show no details.",
+      "version": "1.1.0",
+      "icon": "https://avatars.githubusercontent.com/u/9919?s=64&v=4",
+      "settings": [
+        {
+          "id": "showDescription",
+          "label": "Show the repository description",
+          "type": "toggle",
+          "default": true
+        },
+        {
+          "id": "showStars",
+          "label": "Show stars",
+          "type": "toggle",
+          "default": true
+        },
+        {
+          "id": "showLanguage",
+          "label": "Show the main language",
+          "type": "toggle",
+          "default": true
+        },
+        {
+          "id": "showForks",
+          "label": "Show forks",
+          "type": "toggle",
+          "default": true
+        },
+        {
+          "id": "showOpenIssues",
+          "label": "Show open issues & PRs",
+          "description": "GitHub counts open pull requests as issues too.",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "showUpdated",
+          "label": "Show when it was last updated",
+          "type": "toggle",
+          "default": true
+        }
+      ],
+      "permissions": {
+        "linkCards": [
+          {
+            "hosts": ["github.com", "www.github.com"],
+            "pathPattern": "/{owner}/{repo}/issues/{number}",
+            "pathExclude": ["/orgs", "/organizations", "/users", "/settings", "/account", "/login", "/new", "/notifications", "/issues", "/pulls", "/stars", "/search", "/marketplace", "/topics", "/collections", "/trending", "/sponsors", "/apps", "/features", "/enterprise", "/security", "/about", "/readme", "/customer-stories", "/events", "/solutions", "/resources", "/site", "/codespaces", "/copilot"],
+            "title": "GitHub issue",
+            "subtitle": "{owner}/{repo} #{number}",
+            "buttonLabel": "Open on GitHub",
+            "details": "issue"
+          },
+          {
+            "hosts": ["github.com", "www.github.com"],
+            "pathPattern": "/{owner}/{repo}/pull/{number}",
+            "pathExclude": ["/orgs", "/organizations", "/users", "/settings", "/account", "/login", "/new", "/notifications", "/issues", "/pulls", "/stars", "/search", "/marketplace", "/topics", "/collections", "/trending", "/sponsors", "/apps", "/features", "/enterprise", "/security", "/about", "/readme", "/customer-stories", "/events", "/solutions", "/resources", "/site", "/codespaces", "/copilot"],
+            "title": "GitHub pull request",
+            "subtitle": "{owner}/{repo} #{number}",
+            "buttonLabel": "Open on GitHub",
+            "details": "issue"
+          },
+          {
+            "hosts": ["github.com", "www.github.com"],
+            "pathPattern": "/{owner}/{repo}",
+            "pathExclude": ["/orgs", "/organizations", "/users", "/settings", "/account", "/login", "/new", "/notifications", "/issues", "/pulls", "/stars", "/search", "/marketplace", "/topics", "/collections", "/trending", "/sponsors", "/apps", "/features", "/enterprise", "/security", "/about", "/readme", "/customer-stories", "/events", "/solutions", "/resources", "/site", "/codespaces", "/copilot"],
+            "title": "{owner}/{repo}",
+            "subtitle": "GitHub",
+            "buttonLabel": "Open on GitHub",
+            "details": "repo"
+          }
+        ],
+        "linkDetails": {
+          "host": "api.github.com",
+          "lookups": [
+            {
+              "id": "repo",
+              "path": "/repos/{owner}/{repo}",
+              "title": "full_name",
+              "description": "description",
+              "descriptionIf": "showDescription",
+              "facts": [
+                {
+                  "label": "Stars",
+                  "field": "stargazers_count",
+                  "format": "count",
+                  "if": "showStars"
+                },
+                {
+                  "label": "Language",
+                  "field": "language",
+                  "if": "showLanguage"
+                },
+                {
+                  "label": "Forks",
+                  "field": "forks_count",
+                  "format": "count",
+                  "if": "showForks"
+                },
+                {
+                  "label": "Open issues",
+                  "field": "open_issues_count",
+                  "format": "count",
+                  "if": "showOpenIssues"
+                },
+                {
+                  "label": "Updated",
+                  "field": "pushed_at",
+                  "format": "date",
+                  "if": "showUpdated"
+                }
+              ]
+            },
+            {
+              "id": "issue",
+              "path": "/repos/{owner}/{repo}/issues/{number}",
+              "title": "title",
+              "facts": [
+                {
+                  "label": "State",
+                  "field": "state"
+                },
+                {
+                  "label": "By",
+                  "field": "user.login"
+                },
+                {
+                  "label": "Comments",
+                  "field": "comments",
+                  "format": "count"
+                },
+                {
+                  "label": "Updated",
+                  "field": "updated_at",
+                  "format": "date",
+                  "if": "showUpdated"
+                }
+              ]
+            }
+          ]
+        }
       }
     }
   ]
