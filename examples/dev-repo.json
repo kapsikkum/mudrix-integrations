@@ -78,6 +78,83 @@
           "events": ["com.example.fileshare.sent"]
         }
       }
+    },
+    {
+      "id": "dev-viewer",
+      "name": "Link viewer (dev)",
+      "description": "For local testing only: cards for links on app.altersend.com get a button that opens the page in a window, which may save files. Do not publish.",
+      "version": "0.1.0",
+      "permissions": {
+        "linkCards": [
+          {
+            "hosts": ["app.altersend.com"],
+            "pathPrefix": "/r",
+            "title": "AlterSend transfer",
+            "subtitle": "Sent straight from the sender's device, end-to-end encrypted",
+            "buttonLabel": "Open in browser"
+          }
+        ],
+        "widget": {
+          "url": "https://app.altersend.com/",
+          "name": "AlterSend",
+          "capabilities": [],
+          "fromLinks": true,
+          "linkLabel": "Download",
+          "saveFiles": true
+        }
+      }
+    },
+    {
+      "id": "dev-details",
+      "name": "Link details (dev)",
+      "description": "For local testing only: links such as https://dev-repos.example/octo/hello get a card whose details come from the local dev server's GET /v1/details/octo/hello. A name of 'missing' answers 404. Do not publish.",
+      "version": "0.1.0",
+      "settings": [
+        { "id": "showDescription", "label": "Show the description", "type": "toggle", "default": true },
+        { "id": "showStars", "label": "Show stars", "type": "toggle", "default": true },
+        { "id": "showLanguage", "label": "Show the language", "type": "toggle", "default": true },
+        { "id": "label", "label": "Card label", "type": "text", "default": "Sample project (dev)", "maxLength": 40 },
+        {
+          "id": "size",
+          "label": "Title style",
+          "type": "choice",
+          "default": "full",
+          "options": [
+            { "value": "full", "label": "owner/name" },
+            { "value": "short", "label": "name only" }
+          ]
+        }
+      ],
+      "permissions": {
+        "linkCards": [
+          {
+            "hosts": ["dev-repos.example"],
+            "pathPattern": "/{owner}/{name}",
+            "pathExclude": ["/orgs", "/settings"],
+            "title": "{owner}/{name}",
+            "subtitle": "{setting.label} · {setting.size}",
+            "buttonLabel": "Open",
+            "details": "project"
+          }
+        ],
+        "linkDetails": {
+          "host": "localhost:8787",
+          "lookups": [
+            {
+              "id": "project",
+              "path": "/v1/details/{owner}/{name}",
+              "title": "full_name",
+              "description": "description",
+              "descriptionIf": "showDescription",
+              "facts": [
+                { "label": "Stars", "field": "stargazers_count", "format": "count", "if": "showStars" },
+                { "label": "Language", "field": "language", "if": "showLanguage" },
+                { "label": "Updated", "field": "pushed_at", "format": "date" }
+              ]
+            }
+          ]
+        }
+      }
     }
   ]
 }

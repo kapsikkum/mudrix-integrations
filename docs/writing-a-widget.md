@@ -15,9 +15,16 @@ sends it as a message and announces it with a custom event).
 ## What Mudrix provides
 
 **The iframe.** `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"` and an empty `allow=""`
-permissions policy, so no camera, microphone, geolocation, top-level navigation or downloads. `allow-same-origin`
-means "your own origin": you keep your cookies and storage. That is also why a widget on Mudrix's own origin is
-refused.
+permissions policy, so no camera, microphone, geolocation or top-level navigation, and no downloads unless the
+manifest sets `"saveFiles": true` (which adds `allow-downloads` and is shown to the person at install).
+`allow-same-origin` means "your own origin": you keep your cookies and storage. That is also why a widget on
+Mudrix's own origin is refused.
+
+**Opening shared links (`fromLinks`).** If your service hands out links (a transfer, a document), set
+`"fromLinks": true` and add a `linkCards` rule for your host. Cards for those links then get a button
+(`linkLabel`, default "Open here") that opens the clicked link itself, on exactly your widget's origin, in a
+window. That window is a plain sandboxed page: it gets no Widget API messages and no room. With `saveFiles` it may
+start downloads, which is what a "receive a file" page needs.
 
 **The address.** Your `widget.url`, plus query parameters Mudrix adds:
 
@@ -167,6 +174,12 @@ unencrypted as the room. Do not put secrets in them. Keep the content small and 
 fields, since anybody in the room can send an event of that type. The example `examples/file-share` sends one
 after each file and builds its "Recent transfers" list from them.
 
+## Settings
+
+The `settings` an integration declares (see the [reference](https://github.com/kapsikkum/mudrix-integrations#settings-options-the-person-can-change))
+are for cards, inserted text and api bodies. Mudrix does not pass them to a widget: your page runs on your own
+origin and can keep its own preferences there, for example in `localStorage`.
+
 ## What your server must send
 
 - The page must be **frameable by Mudrix**. Do not send `X-Frame-Options: DENY` or `SAMEORIGIN`. Send
@@ -181,15 +194,21 @@ after each file and builds its "Recent transfers" list from them.
 
 The repository includes everything for a local loop, with no deployment.
 
-1. In this repository run `node examples/dev-server.mjs`. It listens on `8787` (a mock API), `8788` (the
-   `examples/hello-widget/` page at `/` and the `examples/file-share/` page at `/file-share/`, with `frame-ancestors *`) and `8789` (`examples/dev-repo.json` as `/repo.json`, with `key` and `serial` added and a matching `/repo.json.sig`).
+1. In this repository run `npm run dev` (`node examples/dev-server.mjs`). It listens on `8787` (a mock API, and
+   `GET /v1/details/<owner>/<name>` for trying `linkDetails`), `8788` (the `examples/hello-widget/` page at `/`
+   and the `examples/file-share/` page at `/file-share/`, with `frame-ancestors *`) and `8789`
+   (`examples/dev-repo.json` as `/repo.json`, with `key` and `serial` set and a matching `/repo.json.sig`).
+   `npm run dev -- repo.json` serves your own `repo.json` the same way, so you can try it before signing and
+   pushing. `npm run check:dev` checks `examples/dev-repo.json` with Mudrix's development build rules.
    Mudrix refuses unsigned repositories, so the server signs what it serves with a throwaway key it keeps in
    `examples/.dev-key.pem` (git-ignored); keep that file between runs, otherwise Mudrix reports that the key changed.
 2. Start Mudrix in **development mode** (the Vite dev server of the Mudrix repository). Only dev builds accept
-   `localhost` / `127.0.0.1` hosts for `api.host` and `widget.url`.
+   `localhost` / `127.0.0.1` for the repository address, `api.host`, `linkDetails.host` and `widget.url`.
 3. In Settings > Integrations > Repositories add `http://localhost:8789/repo.json`, install "Dev example"
    (tick the code warning), open a room and type `/hello`. Press **Say hello** and the message appears in the room.
-   Install "File share (dev)" and type `/share` to try file upload and the custom event.
+   Install "File share (dev)" and type `/share` to try file upload and the custom event. Install "Link details
+   (dev)" and send `https://dev-repos.example/octo/hello` in an unencrypted room to see a card with looked-up
+   details.
 4. Edit `examples/hello-widget/index.html` and reload; for your own widget copy the example and change the
    `widget.url` and `capabilities` in `examples/dev-repo.json` (do not add `key` or `serial` there: the server does). A changed capability list needs approval
    again.

@@ -1,0 +1,6 @@
+{
+  "json.schemas": [
+    { "fileMatch": ["/repo.json"], "url": "./repo.schema.json" }
+  ],
+  "files.eol": "\n"
+}

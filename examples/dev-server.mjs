@@ -1,25 +1,35 @@
 // Local test servers for examples/dev-repo.json. Plain node, no dependencies.
 //
-//   node examples/dev-server.mjs
+//   node examples/dev-server.mjs [repository file]      (npm run dev, or npm run dev -- repo.json)
 //
-//   8787  mock API: POST /v1/push logs the JSON body and answers {"ok":true} (CORS: any origin)
+//   8787  mock API: POST /v1/push logs the JSON body and answers {"ok":true}, and
+//         GET /v1/details/<owner>/<name> answers a small JSON object for link details (CORS: any origin)
 //   8788  serves examples/hello-widget/ at / and examples/file-share/ at /file-share/ (frameable from anywhere)
-//   8789  serves examples/dev-repo.json as /repo.json plus /repo.json.sig (CORS: any origin).
-//         Mudrix refuses unsigned repositories, so the server adds "key" and "serial" and signs the
+//   8789  serves the repository file (default examples/dev-repo.json) as /repo.json plus /repo.json.sig
+//         (CORS: any origin). It is read again on every request, so an edit shows on the next Refresh.
+//         Mudrix refuses unsigned repositories, so the server sets "key" and "serial" and signs the
 //         exact bytes it serves with a throwaway key kept in examples/.dev-key.pem (git-ignored,
-//         created on first run, so the key is the same between runs).
+//         created on first run, so the key is the same between runs). Pass your own repo.json to try
+//         it in a Mudrix development build before you sign and publish it.
 //
 // DEV ONLY: everything here allows any origin. Never expose these ports.
 import { createServer } from 'node:http';
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+} from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, normalize, sep } from 'node:path';
+import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const widgetDir = join(here, 'hello-widget');
 const fileShareDir = join(here, 'file-share');
+const repoFile = process.argv[2] ? resolve(process.argv[2]) : join(here, 'dev-repo.json');
 
 // Throwaway signing key for the dev repository; never use it for anything real.
 const devKeyFile = join(here, '.dev-key.pem');
@@ -30,9 +40,10 @@ if (!existsSync(devKeyFile)) {
 const devPrivateKey = createPrivateKey(readFileSync(devKeyFile, 'utf8'));
 const devPublicKey = Buffer.from(createPublicKey(devPrivateKey).export({ format: 'jwk' }).x, 'base64url').toString('base64');
 
-/** The exact bytes served as /repo.json (the template plus key and serial) and their signature. */
+/** The exact bytes served as /repo.json (the file with the dev key and serial) and their signature. */
 async function signedDevRepo() {
-  const { schema, name, ...rest } = JSON.parse(await readFile(join(here, 'dev-repo.json'), 'utf8'));
+  // A real repo.json carries its own key and serial: replace them with the dev ones.
+  const { schema, name, key: _key, serial: _serial, ...rest } = JSON.parse(await readFile(repoFile, 'utf8'));
   const bytes = Buffer.from(JSON.stringify({ schema, name, key: devPublicKey, serial: 1, ...rest }, null, 2) + '\n');
   return { bytes, sig: Buffer.from(sign(null, bytes, devPrivateKey).toString('base64') + '\n') };
 }
@@ -47,9 +58,12 @@ const TYPES = {
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, If-None-Match',
+  'Access-Control-Expose-Headers': 'ETag',
   'Access-Control-Max-Age': '600',
 };
+// Fixed for the life of the server, so a link's answer (and its ETag) stays the same.
+const startedAt = new Date().toISOString();
 
 function send(res, status, headers, body) {
   res.writeHead(status, headers);
@@ -89,6 +103,35 @@ const api = createServer(async (req, res) => {
     } catch {
       return send(res, 413, cors, '');
     }
+  }
+  // Link details: a stand-in for an API such as api.github.com/repos/<owner>/<name>.
+  const details = /^\/v1\/details\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+  if (req.method === 'GET' && details) {
+    let owner;
+    let name;
+    try {
+      [owner, name] = details.slice(1).map((p) => decodeURIComponent(p));
+    } catch {
+      return send(res, 400, cors, '');
+    }
+    console.log('[api] GET', url.pathname);
+    if (name === 'missing') return send(res, 404, { ...cors, 'Content-Type': 'application/json' }, '{"message":"Not Found"}');
+    const body = {
+      full_name: `${owner}/${name}`,
+      description: `A sample project called ${name}, answered by the local dev server.`,
+      stargazers_count: 12345,
+      language: 'TypeScript',
+      owner: { login: owner },
+      pushed_at: startedAt,
+    };
+    const text = JSON.stringify(body);
+    // Like api.github.com: an ETag, and 304 Not Modified when Mudrix asks "has it changed?".
+    const etag = `"${createHash('sha1').update(text).digest('hex').slice(0, 16)}"`;
+    if (req.headers['if-none-match'] === etag) {
+      console.log('[api]   304 Not Modified');
+      return send(res, 304, { ...cors, ETag: etag }, '');
+    }
+    return send(res, 200, { ...cors, 'Content-Type': 'application/json', ETag: etag }, text);
   }
   return send(res, 404, { ...cors, 'Content-Type': 'application/json' }, '{"ok":false}');
 });
@@ -130,7 +173,7 @@ const repo = createServer(async (req, res) => {
     const type = isSig ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8';
     return send(res, 200, { ...cors, 'Content-Type': type, 'Cache-Control': 'no-store' }, isSig ? sig : bytes);
   } catch {
-    return send(res, 500, cors, 'dev-repo.json missing or invalid');
+    return send(res, 500, cors, `${repoFile} is missing or not valid JSON`);
   }
 });
 
@@ -145,3 +188,4 @@ for (const [name, server, port] of [
   });
   server.listen(port, '127.0.0.1', () => console.log(`${name}: http://localhost:${port}/`));
 }
+console.log(`Serving ${repoFile}: in a Mudrix development build, add http://localhost:8789/repo.json`);

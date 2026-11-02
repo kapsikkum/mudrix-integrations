@@ -13,9 +13,10 @@ import {
   verify as edVerify,
 } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PLACEHOLDER_PREFIX = 'REPLACE_ME';
 const KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
@@ -37,8 +38,10 @@ Commands
   keygen --out <path>
       Only creates a key pair; prints the public key and its fingerprint.
   sign [repo.json] [--key <path>] [--bump]
-      Writes repo.json.sig. The key comes from --key, or the MUDRIX_SIGNING_KEY environment
-      variable (a path), or MUDRIX_SIGNING_KEY_PEM (the PEM text, for CI secrets).
+      Checks repo.json with Mudrix's own rules (scripts/validate.mjs), then writes repo.json.sig.
+      The key comes from --key, or the MUDRIX_SIGNING_KEY environment variable (a path), or
+      MUDRIX_SIGNING_KEY_PEM (the PEM text, for CI secrets), or else the key in ~/.mudrix/keys/
+      that matches repo.json's "key".
       --bump raises "serial" by 1 first. Do this for every published change.
   verify [repo.json]
       Checks repo.json against repo.json.sig using the key inside repo.json.
@@ -104,9 +107,31 @@ function expandHome(p) {
   return p === '~' || p.startsWith('~/') || p.startsWith('~\\') ? join(homedir(), p.slice(1)) : p;
 }
 
-function loadPrivateKey(keyPath, defaultPath) {
+/** A key in ~/.mudrix/keys/ whose public half is `raw`, so renaming the repository does not lose it. */
+function findKeyFor(raw) {
+  const dir = join(homedir(), '.mudrix', 'keys');
+  let names;
+  try {
+    names = readdirSync(dir).filter((n) => n.endsWith('.key'));
+  } catch {
+    return null;
+  }
+  for (const n of names) {
+    try {
+      const k = createPrivateKey(readFileSync(join(dir, n), 'utf8'));
+      if (k.asymmetricKeyType === 'ed25519' && rawPublicOf(k).equals(raw)) return join(dir, n);
+    } catch {
+      /* not a key file we can read: skip it */
+    }
+  }
+  return null;
+}
+
+function loadPrivateKey(keyPath, defaultPath, raw) {
   let pem;
   let source;
+  if (!keyPath && !process.env.MUDRIX_SIGNING_KEY && !process.env.MUDRIX_SIGNING_KEY_PEM && !(defaultPath && existsSync(defaultPath)))
+    defaultPath = findKeyFor(raw) ?? defaultPath;
   if (keyPath) {
     source = keyPath;
     if (!existsSync(keyPath)) fail(`key file not found: ${keyPath}`);
@@ -123,7 +148,10 @@ function loadPrivateKey(keyPath, defaultPath) {
     source = defaultPath;
     pem = readFileSync(defaultPath, 'utf8');
   } else {
-    fail('no signing key. Pass --key <path>, or set MUDRIX_SIGNING_KEY (a path) or MUDRIX_SIGNING_KEY_PEM (the PEM text).');
+    fail(
+      `no signing key: none of the keys in ${join(homedir(), '.mudrix', 'keys')} matches the "key" in repo.json.\n` +
+        'Pass --key <path>, or set MUDRIX_SIGNING_KEY (a path) or MUDRIX_SIGNING_KEY_PEM (the PEM text).'
+    );
   }
   let k;
   try {
@@ -210,6 +238,19 @@ function findTopLevel(text, name) {
   }
 }
 
+// ---------- Mudrix's own checks (scripts/validate.mjs, generated from the Mudrix source) ----------
+
+async function checkWithMudrixRules(file) {
+  const validator = join(dirname(fileURLToPath(import.meta.url)), 'validate.mjs');
+  if (!existsSync(validator)) {
+    console.log('Note: scripts/validate.mjs is missing, so repo.json was not checked before signing.');
+    return;
+  }
+  const { checkRepoText } = await import(new URL('./validate.mjs', import.meta.url).href);
+  const res = checkRepoText(readFileSync(file, 'utf8'));
+  if (!res.ok) fail(`Mudrix would refuse ${basename(file)}, so it was not signed:\n  ${res.error}`);
+}
+
 function setTopLevel(text, name, jsonValue, after) {
   const existing = findTopLevel(text, name);
   if (existing) return text.slice(0, existing.value.start) + jsonValue + text.slice(existing.value.end);
@@ -222,15 +263,22 @@ function setTopLevel(text, name, jsonValue, after) {
   return text.slice(0, anchor.value.end) + insert + text.slice(anchor.value.end);
 }
 
-function readRepo(file) {
+function readRepo(file, { fixLineEndings = false } = {}) {
   if (!existsSync(file)) fail(`${file} not found.`);
-  const bytes = readFileSync(file);
-  const text = bytes.toString('utf8');
-  if (text.includes('\r'))
-    fail(
-      `${file} has Windows line endings (CRLF). Git converts them to LF when you commit, which would break the signature.\n` +
-        'Save it with LF line endings (in VS Code: click "CRLF" in the status bar and choose "LF"), then run this again.'
-    );
+  let bytes = readFileSync(file);
+  let text = bytes.toString('utf8');
+  if (text.includes('\r')) {
+    if (!fixLineEndings)
+      fail(
+        `${file} has Windows line endings (CRLF). Git converts them to LF when you commit, which would break the signature.\n` +
+          'Run "npm run sign" (it converts them), or save the file with LF line endings, then run this again.'
+      );
+    // Git stores repo.json with LF (.gitattributes), so sign exactly what will be committed.
+    text = text.replace(/\r\n?/g, '\n');
+    writeFileSync(file, text);
+    bytes = Buffer.from(text, 'utf8');
+    console.log(`Note: converted ${basename(file)} to LF line endings, which is what Git stores and what gets signed.`);
+  }
   let json;
   try {
     json = JSON.parse(text);
@@ -316,10 +364,10 @@ function cmdKeygen(argv) {
   console.log('BACK THIS KEY UP and never commit it.');
 }
 
-function cmdInit(argv) {
+async function cmdInit(argv) {
   const a = parseArgs(argv, ['--repo', '--key-out'], []);
   const file = resolve(a.repo ?? a._[0] ?? 'repo.json');
-  const { text, json } = readRepo(file);
+  const { text, json } = readRepo(file, { fixLineEndings: true });
   if (typeof json.key === 'string' && !json.key.startsWith(PLACEHOLDER_PREFIX))
     fail(`${basename(file)} already has a key. "init" is only for a repository that has none yet; use "sign" with the key it was set up with.`);
   const keyPath = resolve(a['key-out'] ? expandHome(a['key-out']) : defaultKeyPath(json.name));
@@ -335,6 +383,13 @@ function cmdInit(argv) {
   writeNewKeyFile(keyPath, k.pem);
   writeFileSync(file, next);
   writeSignature(file, k.privateKey, k.raw);
+  let problem = null;
+  try {
+    await checkWithMudrixRules(file);
+  } catch (e) {
+    if (!(e instanceof Fail)) throw e;
+    problem = e.message;
+  }
   const serial = JSON.parse(next).serial;
   console.log(`Your repository is set up and signed (serial ${serial}).\n`);
   console.log(`  Fingerprint: ${fingerprintOfRaw(k.raw)}`);
@@ -347,9 +402,13 @@ function cmdInit(argv) {
   console.log('  2. Run: npm run sign   (raises the serial and signs again)');
   console.log(`  3. Commit and push ${basename(file)} and ${basename(sigPathOf(file))}.`);
   console.log('  4. Add the repository in Mudrix and check that the fingerprint it shows matches the one above.');
-  console.log('\nTo sign later, tell the tool where the key is: --key <path> or the MUDRIX_SIGNING_KEY variable.');
-  console.log(`(For example: ${process.platform === 'win32' ? '$env:MUDRIX_SIGNING_KEY' : 'export MUDRIX_SIGNING_KEY'}="${keyPath}")`);
-  console.log('Without either, "npm run sign" looks for the key in the default place above.');
+  if (dirname(keyPath) === join(homedir(), '.mudrix', 'keys')) {
+    console.log('\n"npm run sign" finds this key by itself while it stays in that folder, even if you rename the repository.');
+  } else {
+    console.log('\nThe key is outside ~/.mudrix/keys/, so tell "npm run sign" where it is: --key <path> or the MUDRIX_SIGNING_KEY variable.');
+    console.log(`(For example: ${process.platform === 'win32' ? '$env:MUDRIX_SIGNING_KEY' : 'export MUDRIX_SIGNING_KEY'}="${keyPath}")`);
+  }
+  if (problem) console.log(`\nBefore you publish, fix this and run npm run sign again:\n  ${problem}`);
 }
 
 function committedRepo(file) {
@@ -364,13 +423,14 @@ function committedRepo(file) {
   }
 }
 
-function cmdSign(argv) {
+async function cmdSign(argv) {
   const a = parseArgs(argv, ['--key'], ['--bump']);
   const file = resolve(a._[0] ?? 'repo.json');
-  let { text, json } = readRepo(file);
+  let { text, json } = readRepo(file, { fixLineEndings: true });
   const raw = parseKeyField(json.key);
   checkSerial(json.serial);
-  const priv = loadPrivateKey(a.key ? expandHome(a.key) : undefined, defaultKeyPath(json.name));
+  const priv = loadPrivateKey(a.key ? expandHome(a.key) : undefined, defaultKeyPath(json.name), raw);
+  await checkWithMudrixRules(file);
   if (!rawPublicOf(priv).equals(raw))
     fail('this is not the key this repository was set up with: the private key does not match the "key" in repo.json.');
   const before = json.serial;
@@ -415,7 +475,7 @@ if (!commands[cmd]) {
   process.exit(cmd === undefined || cmd === 'help' || cmd === '--help' ? 0 : 1);
 }
 try {
-  commands[cmd](rest);
+  await commands[cmd](rest);
 } catch (e) {
   if (e instanceof Fail) {
     console.error(`Error: ${e.message}`);

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Mudrix integrations repository (schema 1)",
-  "description": "A structural check for editors and CI, written to match Mudrix's own validator. It cannot express cross-references (a command's api target must exist in api.actions, a widget command needs permissions.widget, an api command needs permissions.api, ids and command names must be unique): validate.yml checks those. The signature itself (repo.json.sig) is not a schema matter: it is checked by `node scripts/sign.mjs verify`. Mudrix itself is the final validator. Notes: localhost hosts are accepted only by Mudrix dev builds and are not valid here; lengths count code points here but UTF-16 units in Mudrix.",
+  "description": "For editors (autocompletion and hints while you type). It is written to match Mudrix's validator but cannot express everything (cross-references such as a command's api target or a card's details lookup, unique ids, lengths in UTF-16 units). The real check is `node scripts/validate.mjs` (npm run check), which runs Mudrix's own validator; `npm run sign` runs it too. localhost hosts are accepted only by Mudrix development builds and are not valid here.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -73,14 +73,14 @@
       }
     },
     "templateRoom": {
-      "description": "Text whose only braces are complete {room} placeholders.",
+      "description": "Text whose only braces are complete {room} placeholders, or {setting.<id>} for a text or choice setting.",
       "allOf": [
         {
           "$ref": "#/definitions/text"
         },
         {
           "maxLength": 500,
-          "pattern": "^([^{}]|\\{room\\})*$"
+          "pattern": "^([^{}]|\\{room\\}|\\{setting\\.[a-zA-Z0-9]+\\})*$"
         }
       ]
     },
@@ -132,6 +132,14 @@
         "icon": {
           "$ref": "#/definitions/httpsUrl"
         },
+        "settings": {
+          "description": "Up to 8 options the person can set. See definitions.setting.",
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/definitions/setting"
+          }
+        },
         "permissions": {
           "type": "object",
           "additionalProperties": false,
@@ -142,6 +150,9 @@
               "items": {
                 "$ref": "#/definitions/linkCard"
               }
+            },
+            "linkDetails": {
+              "$ref": "#/definitions/linkDetails"
             },
             "composerActions": {
               "type": "array",
@@ -187,9 +198,31 @@
         "pathPrefix": {
           "type": "string",
           "maxLength": 200,
-          "pattern": "^/[^?#\\s\\\\]*$"
+          "pattern": "^/[^?#\\s\\\\]*$",
+          "description": "The link's path must start with this (a plain text prefix). Exclusive with pathPattern."
+        },
+        "pathPattern": {
+          "description": "Segment pattern such as \"/{owner}/{repo}\": literal segments must match exactly, each {name} takes one whole segment, and the link may continue below. The captures can be used as {name} in title and subtitle and in a linkDetails lookup path. Exclusive with pathPrefix.",
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^(/(\\{[a-z][a-z0-9_]{0,15}\\}|[A-Za-z0-9._~-]+)){1,8}$",
+          "not": {
+            "pattern": "(^|/)\\.{1,2}(/|$)"
+          }
+        },
+        "pathExclude": {
+          "description": "Paths this rule never matches, compared case-insensitively by whole segments: \"/orgs\" leaves out /orgs and /orgs/x but not /orgsx. Use it to keep a pattern such as \"/{owner}/{repo}\" off a site's own pages.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^/[^?#\\s\\\\{}]+$"
+          }
         },
         "title": {
+          "description": "Card title. May use {name} captures from pathPattern and {setting.<id>} for a text or choice setting.",
           "allOf": [
             {
               "$ref": "#/definitions/text"
@@ -200,6 +233,7 @@
           ]
         },
         "subtitle": {
+          "description": "Line under the title. May use {name} captures from pathPattern and {setting.<id>} for a text or choice setting.",
           "allOf": [
             {
               "$ref": "#/definitions/text"
@@ -220,8 +254,25 @@
           ]
         },
         "icon": {
+          "description": "Accepted for compatibility but not shown: the card shows the integration's icon.",
           "$ref": "#/definitions/httpsUrl"
+        },
+        "details": {
+          "description": "Id of a lookup in permissions.linkDetails.lookups. Needs pathPattern, and the pattern must capture every {name} the lookup path uses.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
         }
+      },
+      "not": {
+        "required": [
+          "pathPrefix",
+          "pathPattern"
+        ]
+      },
+      "dependencies": {
+        "details": [
+          "pathPattern"
+        ]
       }
     },
     "composerAction": {
@@ -295,14 +346,14 @@
           ]
         },
         "insert": {
-          "description": "Text put into the message box. Placeholders: {room} and {args}.",
+          "description": "Text put into the message box. Placeholders: {room}, {args} and {setting.<id>} (a text or choice setting).",
           "allOf": [
             {
               "$ref": "#/definitions/text"
             },
             {
               "maxLength": 500,
-              "pattern": "^([^{}]|\\{room\\}|\\{args\\})*$"
+              "pattern": "^([^{}]|\\{room\\}|\\{args\\}|\\{setting\\.[a-zA-Z0-9]+\\})*$"
             }
           ]
         },
@@ -388,7 +439,7 @@
           }
         },
         "body": {
-          "description": "JSON body template. String values only; {room}, {text} and {args} are substituted.",
+          "description": "JSON body template. String values only; {room}, {text} and {args} are substituted, and {setting.<id>} for a choice setting (never a text setting: free text is not sent to hosts).",
           "type": "object",
           "maxProperties": 16,
           "propertyNames": {
@@ -405,7 +456,7 @@
                 "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u061C\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F\\uFEFF\\uFFF9-\\uFFFB]*$"
               },
               {
-                "pattern": "^([^{}]|\\{room\\}|\\{text\\}|\\{args\\})*$"
+                "pattern": "^([^{}]|\\{room\\}|\\{text\\}|\\{args\\}|\\{setting\\.[a-zA-Z0-9]+\\})*$"
               }
             ]
           }
@@ -497,8 +548,337 @@
               "pattern": "^(m|org\\.matrix|im\\.vector|io\\.element)(\\.|$)"
             }
           }
+        },
+        "fromLinks": {
+          "description": "Cards for links on exactly this widget's origin get a button that opens the clicked link (any path) in a window. Needs a linkCards rule for that host. The page at the link runs code.",
+          "const": true
+        },
+        "linkLabel": {
+          "description": "Text of that button (default \"Open here\"). Only with fromLinks.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 24
+            }
+          ]
+        },
+        "saveFiles": {
+          "description": "The page may save files to the device (the sandbox gets allow-downloads).",
+          "const": true
+        }
+      },
+      "dependencies": {
+        "linkLabel": [
+          "fromLinks"
+        ]
+      }
+    },
+    "field": {
+      "description": "A JSON field of the answer, or up to 4 field names joined with \".\" (such as owner.login).",
+      "type": "string",
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9_]{1,32}(\\.[A-Za-z0-9_]{1,32}){0,3}$",
+      "not": {
+        "pattern": "(^|\\.)(__proto__|constructor|prototype)(\\.|$)"
+      }
+    },
+    "linkDetails": {
+      "description": "Data only, but it contacts one host: when a card with \"details\" is shown, Mudrix GETs the lookup path on this host (without cookies) and shows the named fields of the JSON answer as plain text. In encrypted rooms only when the person presses the card's button.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "lookups"
+      ],
+      "properties": {
+        "host": {
+          "$ref": "#/definitions/host"
+        },
+        "lookups": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/definitions/lookup"
+          }
         }
       }
+    },
+    "lookup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "title"
+          ]
+        },
+        {
+          "required": [
+            "description"
+          ]
+        },
+        {
+          "required": [
+            "facts"
+          ]
+        }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+        },
+        "path": {
+          "description": "Starts with \"/\"; letters, digits, . _ ~ / - and {name} placeholders from the card's pathPattern (filled in percent-encoded); no \".\" or \"..\" segments; no query string.",
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^/([A-Za-z0-9._~/-]|\\{[a-z][a-z0-9_]{0,15}\\})*$",
+          "not": {
+            "pattern": "(^|/)\\.{1,2}(/|$)"
+          }
+        },
+        "title": {
+          "description": "Field shown as the card title.",
+          "$ref": "#/definitions/field"
+        },
+        "description": {
+          "description": "Field shown under the title (up to 3 lines).",
+          "$ref": "#/definitions/field"
+        },
+        "descriptionIf": {
+          "description": "Id of a toggle setting: the description is shown only while it is on.",
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9]{0,23}$"
+        },
+        "facts": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/definitions/fact"
+          }
+        }
+      },
+      "dependencies": {
+        "descriptionIf": [
+          "description"
+        ]
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "field"
+      ],
+      "properties": {
+        "label": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "maxLength": 24
+            }
+          ]
+        },
+        "field": {
+          "$ref": "#/definitions/field"
+        },
+        "format": {
+          "description": "text (default), count (12.3K) or date (a localised date from an ISO date string).",
+          "enum": [
+            "text",
+            "count",
+            "date"
+          ]
+        },
+        "if": {
+          "description": "Id of a toggle setting: the fact is shown only while it is on.",
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9]{0,23}$"
+        }
+      }
+    },
+    "setting": {
+      "description": "An option the person can change in Settings > Integrations. Values stay on their device and are never sent anywhere by Mudrix; they only fill this integration's own templates or switch looked-up fields on and off. Not for passwords or tokens. Changing a setting's type or default, or adding a choice value, counts as an update that needs approval.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "type",
+            "default"
+          ],
+          "properties": {
+            "id": {
+              "description": "Starts with a lowercase letter, then letters and digits (up to 24). Used as {setting.<id>} in templates, or in \"if\" / \"descriptionIf\".",
+              "type": "string",
+              "pattern": "^[a-z][a-zA-Z0-9]{0,23}$"
+            },
+            "label": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/text"
+                },
+                {
+                  "maxLength": 40
+                }
+              ]
+            },
+            "description": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/text"
+                },
+                {
+                  "maxLength": 120
+                }
+              ]
+            },
+            "type": {
+              "const": "toggle"
+            },
+            "default": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "type",
+            "default"
+          ],
+          "properties": {
+            "id": {
+              "description": "Starts with a lowercase letter, then letters and digits (up to 24). Used as {setting.<id>} in templates, or in \"if\" / \"descriptionIf\".",
+              "type": "string",
+              "pattern": "^[a-z][a-zA-Z0-9]{0,23}$"
+            },
+            "label": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/text"
+                },
+                {
+                  "maxLength": 40
+                }
+              ]
+            },
+            "description": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/text"
+                },
+                {
+                  "maxLength": 120
+                }
+              ]
+            },
+            "type": {
+              "const": "text"
+            },
+            "default": {
+              "type": "string",
+              "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u061C\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F\\uFEFF\\uFFF9-\\uFFFB]*$",
+              "description": "May be empty. At most maxLength characters."
+            },
+            "maxLength": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "type",
+            "default",
+            "options"
+          ],
+          "properties": {
+            "id": {
+              "description": "Starts with a lowercase letter, then letters and digits (up to 24). Used as {setting.<id>} in templates, or in \"if\" / \"descriptionIf\".",
+              "type": "string",
+              "pattern": "^[a-z][a-zA-Z0-9]{0,23}$"
+            },
+            "label": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/text"
+                },
+                {
+                  "maxLength": 40
+                }
+              ]
+            },
+            "description": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/text"
+                },
+                {
+                  "maxLength": 120
+                }
+              ]
+            },
+            "type": {
+              "const": "choice"
+            },
+            "default": {
+              "type": "string",
+              "description": "The value of one of the options."
+            },
+            "options": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "value",
+                  "label"
+                ],
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._~-]{1,40}$"
+                  },
+                  "label": {
+                    "allOf": [
+                      {
+                        "$ref": "#/definitions/text"
+                      },
+                      {
+                        "maxLength": 40
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

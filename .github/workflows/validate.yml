@@ -1,8 +1,8 @@
 name: Validate
 
-# Checks that repo.json.sig is a valid signature of repo.json, then repo.json against repo.schema.json, then the rules a schema cannot express:
-# unique ids and command names, and that commands point at things the integration really has.
-# Mudrix is the final validator; add the repository in Settings > Integrations to see its verdict.
+# Checks repo.json with Mudrix's own validator (scripts/validate.mjs is generated from the Mudrix
+# source, so it accepts and refuses exactly what Mudrix does), then that repo.json.sig is a valid
+# signature of it. No dependencies are installed.
 on:
   push:
   pull_request:
@@ -15,44 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Mudrix's checks
+        run: node scripts/validate.mjs repo.json && node scripts/validate.mjs --dev examples/dev-repo.json
       - name: Signature
         # A contributor's pull request cannot carry the official signature: the maintainer signs after merging.
         if: github.event_name != 'pull_request'
         run: node scripts/sign.mjs verify repo.json
-      - name: Schema
-        run: npx --yes ajv-cli@5.0.0 validate --strict=false -s repo.schema.json -d repo.json
-      - name: Cross-references
-        run: |
-          node -e '
-            const r = require("./repo.json");
-            const errors = [];
-            const dups = (list) => list.filter((x, n) => list.indexOf(x) !== n);
-            const d = dups(r.integrations.map((i) => i.id));
-            if (d.length) errors.push("duplicate integration ids: " + d.join(", "));
-            for (const i of r.integrations) {
-              const p = i.permissions || {};
-              const at = (msg) => errors.push(i.id + ": " + msg);
-              const actionIds = (p.composerActions || []).map((x) => x.id);
-              if (dups(actionIds).length) at("duplicate composer action ids");
-              const apiIds = ((p.api && p.api.actions) || []).map((x) => x.id);
-              if (dups(apiIds).length) at("duplicate api action ids");
-              const names = (p.commands || []).map((c) => c.name);
-              if (dups(names).length) at("duplicate command names: " + dups(names).join(", "));
-              for (const c of p.commands || []) {
-                if (c.usage !== undefined && c.usage !== "/" + c.name && !c.usage.startsWith("/" + c.name + " "))
-                  at("command " + c.name + ": usage must start with /" + c.name);
-                if (c.api !== undefined) {
-                  if (!p.api) at("command " + c.name + ": api command needs permissions.api");
-                  else if (!apiIds.includes(c.api)) at("command " + c.name + ": no api action with id " + c.api);
-                }
-                if (c.widget === true && !p.widget) at("command " + c.name + ": widget command needs permissions.widget");
-              }
-              if (p.widget) {
-                const u = new URL(p.widget.url);
-                if (u.searchParams.has("theme") || u.searchParams.has("lang"))
-                  at("widget url must not set theme or lang (Mudrix adds them)");
-              }
-            }
-            if (errors.length) { errors.forEach((e) => console.error(e)); process.exit(1); }
-            console.log("ok");
-          '

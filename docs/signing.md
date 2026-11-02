@@ -16,12 +16,13 @@ README.
 ```
 npm run init      # once: creates your key, puts the public half into repo.json, signs
 # edit repo.json
-npm run sign      # every time you publish a change (raises the serial and signs)
-npm run verify    # optional: check what you are about to push
+npm run sign      # every time you publish a change (checks the file, raises the serial and signs)
+npm run check     # optional: Mudrix's checks plus the signature, on what you are about to push
 ```
 
-Without npm: `node scripts/sign.mjs init`, `node scripts/sign.mjs sign --bump`, `node scripts/sign.mjs verify`.
-Node 20 or newer; the script has no dependencies.
+Without npm: `node scripts/sign.mjs init`, `node scripts/sign.mjs sign --bump`, `node scripts/validate.mjs` and
+`node scripts/sign.mjs verify`. Node 20 or newer; the scripts have no dependencies. `scripts/validate.mjs` is
+generated from Mudrix's own validator, so it accepts and refuses exactly what Mudrix does.
 
 ## How it works
 
@@ -59,7 +60,8 @@ that ships inside Mudrix (those show an "Official" badge).
 **`repo.json.sig`** is the standard base64 of the 64-byte Ed25519 signature, on one line (a trailing newline is
 fine). The signature covers the file's bytes exactly as they are served, which is why any edit, even a space, needs
 a new signature. This repository's `.gitattributes` pins the line endings of `repo.json` to LF so Git on Windows
-cannot rewrite them after you signed; keep that file.
+cannot rewrite them after you signed; keep that file. If your editor saved the file with Windows line endings,
+`sign` converts them to LF before signing (`verify` only reports them).
 
 **Fingerprint**: the SHA-256 of the 32 raw key bytes, the first 16 bytes written in lowercase hex as eight groups
 of four, for example `080e ffe6 20f6 a24d fdaf de75 dd9b 8e71`. `node scripts/sign.mjs fingerprint <key>` prints it.
@@ -77,7 +79,7 @@ const ok = await crypto.subtle.verify('Ed25519', key, signatureBytes, repoJsonBy
 | --- | --- |
 | `init [--repo repo.json] [--key-out <path>]` | creates a key pair, writes the private key (mode 600) to `--key-out` or `~/.mudrix/keys/<repository-name>.key`, puts the public key into `repo.json` (and `serial: 1` if missing), signs, and prints the fingerprint. Refuses to overwrite an existing key file, and refuses a repository that already has a key |
 | `keygen --out <path>` | only creates a key pair; prints the public key and fingerprint |
-| `sign [repo.json] [--key <path>] [--bump]` | signs. The key comes from `--key`, then the `MUDRIX_SIGNING_KEY` variable (a path), then `MUDRIX_SIGNING_KEY_PEM` (the PEM text), then the default location `init` used. `--bump` raises `serial` by one first, changing nothing else in the file. Refuses a key that does not match the `key` in `repo.json` |
+| `sign [repo.json] [--key <path>] [--bump]` | checks the file with Mudrix's rules (`scripts/validate.mjs`) and refuses to sign one Mudrix would refuse, then signs. The key comes from `--key`, then the `MUDRIX_SIGNING_KEY` variable (a path), then `MUDRIX_SIGNING_KEY_PEM` (the PEM text), then the key in `~/.mudrix/keys/` whose public half is the `key` in `repo.json` (so renaming the repository does not lose it). `--bump` raises `serial` by one first, changing nothing else in the file. Refuses a key that does not match the `key` in `repo.json` |
 | `verify [repo.json]` | checks `repo.json` against `repo.json.sig`; exits with 1 and a message if it does not fit |
 | `fingerprint <base64-key>` | prints the fingerprint Mudrix shows |
 
@@ -95,8 +97,8 @@ const ok = await crypto.subtle.verify('Ed25519', key, signatureBytes, repoJsonBy
 - **Why there is no override.** If Mudrix accepted a changed key or an unsigned file after a click, an attacker who
   can alter the file (a hijacked GitHub account, a bad mirror) would only need to talk a reader into one click.
   Refusing outright is what makes the pin worth anything.
-- **Moving to another computer.** Copy the key file over and point at it with `--key <path>` or the
-  `MUDRIX_SIGNING_KEY` variable.
+- **Moving to another computer.** Copy the key file into `~/.mudrix/keys/` there (then `sign` finds it), or point
+  at it with `--key <path>` or the `MUDRIX_SIGNING_KEY` variable.
 
 ## The serial rule
 
@@ -171,6 +173,12 @@ wrong with the repository.
 
 **`init` says the key file already exists.** It never overwrites. Pick another path with `--key-out`. If the existing file belongs to a different repository,
 the default name came from your repository `name`; changing the name or passing `--key-out` avoids the clash.
+
+**`sign` says "Mudrix would refuse repo.json".** The line after it names the field and the problem, exactly as
+Mudrix would report it. Fix it and run `npm run sign` again; nothing was signed and the serial was not raised.
+
+**`sign` says "no signing key".** None of the keys in `~/.mudrix/keys/` matches the `key` in `repo.json`. Point at
+the key file with `--key <path>` or `MUDRIX_SIGNING_KEY`, or copy it into that folder.
 
 **`sign` says "this is not the key this repository was set up with".** The private key you pointed at does not
 match the `key` in `repo.json`. Find the original key file. If it is gone, see "Rotation" above.
